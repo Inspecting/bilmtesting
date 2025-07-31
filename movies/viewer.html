@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Viewer</title>
+</head>
+<body data-title="MOVIE_TITLE" data-poster="POSTER_URL" data-year="YEAR">
+  <div class="video-wrapper" style="position:relative;">
+    <iframe id="videoPlayer" src="" frameborder="0" allowfullscreen></iframe>
+    <div id="playerOverlay" style="
+         position:absolute;top:0;left:0;
+         width:100%;height:100%;z-index:10;
+         cursor:pointer;"></div>
+  </div>
+  <!-- rest of viewer content -->
+  <script src="script.js"></script>
+</body>
+</html>

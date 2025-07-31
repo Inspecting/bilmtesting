@@ -1,0 +1,40 @@
+/* Reuse movie-page scroll-row */
+.scroll-row {
+  display: flex;
+  overflow-x: auto;
+  gap: 1rem;
+  padding: 1rem 0;
+}
+.scroll-row::-webkit-scrollbar {
+  height: 8px;
+}
+.scroll-row::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+/* Movie-card style */
+.movie-card {
+  background: #1e1e1e;
+  border-radius: 12px;
+  overflow: hidden;
+  flex: 0 0 140px;
+  text-decoration: none;
+  color: inherit;
+  transition: transform .2s;
+}
+.movie-card:hover {
+  transform: scale(1.05);
+}
+.movie-card img {
+  width:100%; height:210px; object-fit:cover;
+}
+.movie-info {
+  padding:8px;
+}
+.movie-info h3 {
+  font-size:1rem; margin:0; color:#c084fc;
+}
+.movie-info p {
+  font-size:.8rem; margin:4px 0 0; color:#aaa;
+}
