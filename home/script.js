@@ -106,6 +106,16 @@ function wireLibrary(section) {
       });
     });
 
+    });
+
+    row.querySelectorAll('.select-tile').forEach((checkbox) => {
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selected.add(checkbox.dataset.key);
+        else selected.delete(checkbox.dataset.key);
+        removeBtn.disabled = selected.size === 0;
+      });
+    });
+
     removeBtn.disabled = selected.size === 0;
   };
 
@@ -141,6 +151,87 @@ function wireLibrary(section) {
 
 document.addEventListener('DOMContentLoaded', () => {
   window.BilmFoundation?.initPage?.({ bodyClass: 'page-home' });
+  });
+
+  editBtn.addEventListener('click', () => {
+    editMode = !editMode;
+    editBtn.classList.toggle('is-active', editMode);
+    editBtn.textContent = editMode ? 'Done' : 'Edit';
+    removeBtn.hidden = !editMode;
+    selected = new Set();
+    render();
+  });
+
+  removeBtn.addEventListener('click', () => {
+    const all = safeRead(key);
+    const next = all.filter((item) => !selected.has(item.key || `${normalizeType(item)}-${item.tmdbId || item.id || itemTitle(item)}`));
+    safeWrite(key, next);
+    selected = new Set();
+    renderStats();
+    render();
+  });
+
+  render();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  window.BilmFoundation?.initPage?.({ bodyClass: 'page-home' });
+  });
+
+  editBtn.addEventListener('click', () => {
+    editMode = !editMode;
+    editBtn.classList.toggle('is-active', editMode);
+    editBtn.textContent = editMode ? 'Done' : 'Edit';
+    removeBtn.hidden = !editMode;
+    selected = new Set();
+    render();
+  });
+
+  removeBtn.addEventListener('click', () => {
+    const all = safeRead(key);
+    const next = all.filter((item) => !selected.has(item.key || `${normalizeType(item)}-${item.tmdbId || item.id || itemTitle(item)}`));
+    safeWrite(key, next);
+    selected = new Set();
+    renderStats();
+    render();
+  });
+
+  render();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  window.BilmFoundation?.initPage?.({ bodyClass: 'page-home' });
+  });
+
+  editBtn.addEventListener('click', () => {
+    editMode = !editMode;
+    editBtn.classList.toggle('is-active', editMode);
+    editBtn.textContent = editMode ? 'Done' : 'Edit';
+    removeBtn.hidden = !editMode;
+    selected = new Set();
+    render();
+  });
+
+  removeBtn.addEventListener('click', () => {
+    const all = safeRead(key);
+    const next = all.filter((item) => !selected.has(item.key || `${normalizeType(item)}-${item.tmdbId || item.id || itemTitle(item)}`));
+    safeWrite(key, next);
+    selected = new Set();
+    renderStats();
+    render();
+  });
+
+  render();
+}
+
+function withBase(path) {
+  const parts = window.location.pathname.split('/').filter(Boolean);
+  const appRoots = new Set(['home', 'movies', 'tv', 'games', 'search', 'settings', 'random', 'test', 'shared', 'index.html']);
+  const base = !parts.length || appRoots.has(parts[0]) ? '' : `/${parts[0]}`;
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
   const form = document.getElementById('heroSearchForm');
   const input = document.getElementById('heroSearchInput');
 
@@ -156,6 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.location.href = `${(window.BilmFoundation?.withBase || ((path) => path))('/search/')}?q=${encodeURIComponent(query)}`;
+    window.location.href = `${withBase('/search/')}?q=${encodeURIComponent(query)}`;
   });
 
   renderStats();
