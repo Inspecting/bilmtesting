@@ -1,26 +1,15 @@
+const foundation = window.BilmFoundation;
+
 function detectBasePath() {
+  if (foundation?.detectBasePath) return foundation.detectBasePath();
   const appRoots = new Set(['home', 'movies', 'tv', 'games', 'search', 'settings', 'random', 'test', 'shared', 'index.html']);
-
-  const scriptSrc = document.currentScript?.src;
-  if (scriptSrc) {
-    try {
-      const scriptPath = new URL(scriptSrc, window.location.href).pathname;
-      const sharedIndex = scriptPath.lastIndexOf('/shared/');
-      if (sharedIndex >= 0) {
-        const prefix = scriptPath.slice(0, sharedIndex);
-        return prefix || '';
-      }
-    } catch {
-      // Fall back to pathname parsing.
-    }
-  }
-
   const parts = window.location.pathname.split('/').filter(Boolean);
   if (!parts.length || appRoots.has(parts[0])) return '';
   return `/${parts[0]}`;
 }
 
 function withBase(path) {
+  if (foundation?.withBase) return foundation.withBase(path);
   const normalized = path.startsWith('/') ? path : `/${path}`;
   return `${detectBasePath()}${normalized}`;
 }
@@ -54,6 +43,7 @@ function loadAuthScript() {
   if (!container) return;
 
   document.body.classList.add('has-fixed-navbar');
+  foundation?.initPage?.();
 
   const shadow = container.attachShadow({ mode: 'open' });
 
