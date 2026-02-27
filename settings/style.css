@@ -1,0 +1,10 @@
+body { margin:0; }
+.settings-page { margin-top:96px; margin-bottom:40px; }
+.panel { padding:18px; }
+.panel h1,.panel h2 { margin:0; }
+.panel h2 { font-size:1.05rem; margin-bottom:10px; }
+.row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid var(--panel-border-color); }
+.row:last-child { border-bottom:none; }
+.row select { padding:8px; border-radius:10px; border:1px solid var(--panel-border-color); background: color-mix(in srgb,var(--surface-3) 84%,transparent); color:var(--text-primary); }
+.nav-links { display:grid; gap:8px; }
+.nav-links a { color: var(--accent); text-decoration:none; }
