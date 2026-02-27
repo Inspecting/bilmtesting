@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bilm 💜 - Test Movie Details</title>
+  <link rel="stylesheet" href="../../shared/theme.css" />
+  <link rel="stylesheet" href="../style.css" />
+  <script src="../../shared/access.js"></script>
+  <script src="../../shared/theme.js"></script>
+</head>
+<body>
+  <div id="navbarContainer"></div>
+  <main class="container">
+    <header class="header">
+      <h1 class="title" id="movieTitle">Movie Details</h1>
+      <p class="subtitle">Regular movie page with details, trailer, cast, and related titles.</p>
+    </header>
+
+    <section class="card">
+      <div class="lookup" style="grid-template-columns: 140px 1fr auto auto;">
+        <select id="idType">
+          <option value="auto">Auto detect</option>
+          <option value="tmdb">TMDB</option>
+          <option value="imdb">IMDb</option>
+        </select>
+        <input id="idInput" placeholder="TMDB or IMDb ID" />
+        <button id="loadBtn">Load</button>
+        <button id="watchBtn">Watch Movie</button>
+      </div>
+      <p id="status" class="subtitle"></p>
+    </section>
+
+    <section id="movieBody" style="display:none;">
+      <div class="grid hero">
+        <img id="poster" class="poster" alt="Movie poster" />
+        <div class="card">
+          <h2 id="titleHead" style="margin:0;"></h2>
+          <p id="overview" class="subtitle"></p>
+          <div id="pills" class="pills"></div>
+          <div class="actions">
+            <a id="watchLink"><button>Go to Watch Page</button></a>
+            <button id="favoriteBtn" class="ghost" type="button">Add to Favorites</button>
+            <button id="watchLaterBtn" class="ghost" type="button">Add to Watch Later</button>
+            <a id="tmdbLink" target="_blank" rel="noopener"><button class="ghost">Open on TMDB</button></a>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="section-title">Trailer</h3>
+      <section class="card trailer" id="trailerBox"></section>
+
+      <h3 class="section-title">Top Cast</h3>
+      <section class="card"><div id="castLine" class="subtitle"></div></section>
+
+      <h3 class="section-title">More Like This</h3>
+      <section class="more-grid" id="moreLike"></section>
+    </section>
+  </main>
+
+  <script src="../../shared/navbar.js" defer></script>
+  <script src="../app.js"></script>
+  <script src="./movie.js"></script>
+</body>
+</html>
