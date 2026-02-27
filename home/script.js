@@ -139,6 +139,31 @@ function wireLibrary(section) {
   render();
 }
 
+document.addEventListener('DOMContentLoaded', () => {
+  window.BilmFoundation?.initPage?.({ bodyClass: 'page-home' });
+  });
+
+  editBtn.addEventListener('click', () => {
+    editMode = !editMode;
+    editBtn.classList.toggle('is-active', editMode);
+    editBtn.textContent = editMode ? 'Done' : 'Edit';
+    removeBtn.hidden = !editMode;
+    selected = new Set();
+    render();
+  });
+
+  removeBtn.addEventListener('click', () => {
+    const all = safeRead(key);
+    const next = all.filter((item) => !selected.has(item.key || `${normalizeType(item)}-${item.tmdbId || item.id || itemTitle(item)}`));
+    safeWrite(key, next);
+    selected = new Set();
+    renderStats();
+    render();
+  });
+
+  render();
+}
+
 function withBase(path) {
   const parts = window.location.pathname.split('/').filter(Boolean);
   const appRoots = new Set(['home', 'movies', 'tv', 'games', 'search', 'settings', 'random', 'test', 'shared', 'index.html']);
@@ -161,6 +186,7 @@ document.addEventListener('DOMContentLoaded', () => {
       safeWrite(SEARCH_HISTORY_KEY, [{ query, updatedAt: Date.now() }, ...history].slice(0, 50));
     }
 
+    window.location.href = `${(window.BilmFoundation?.withBase || ((path) => path))('/search/')}?q=${encodeURIComponent(query)}`;
     window.location.href = `${withBase('/search/')}?q=${encodeURIComponent(query)}`;
   });
 

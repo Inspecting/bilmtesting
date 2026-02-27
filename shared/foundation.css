@@ -1,0 +1,39 @@
+:root {
+  --content-max-width: 1200px;
+  --content-gap: 20px;
+  --content-pad-inline: min(3vw, 24px);
+  --panel-border-color: color-mix(in srgb, var(--text-primary) 14%, transparent);
+  --panel-bg: color-mix(in srgb, var(--surface-2) 82%, transparent);
+}
+
+.page-frame {
+  width: min(var(--content-max-width), calc(100% - (var(--content-pad-inline) * 2)));
+  margin: 0 auto;
+}
+
+.page-stack {
+  display: grid;
+  gap: var(--content-gap);
+}
+
+.surface-panel {
+  border: 1px solid var(--panel-border-color);
+  background: var(--panel-bg);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.control-pill {
+  border-radius: 999px;
+  border: 1px solid var(--panel-border-color);
+  background: color-mix(in srgb, var(--surface-3) 80%, transparent);
+  color: var(--text-primary);
+}
+
+.section-label {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
