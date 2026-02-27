@@ -1,3 +1,7 @@
+const CACHE_NAME = 'bilm-shell-v5';
+const SCOPE_URL = new URL(self.registration.scope);
+const APP_SHELL = ['.', 'index.html', 'home/', 'manifest.json', 'icon.png', 'shared/theme.css', 'shared/foundation.css']
+  .map((path) => new URL(path, SCOPE_URL).toString());
 const CACHE_NAME = 'bilm-shell-v4';
 const APP_SHELL = ['/', '/index.html', '/home/', '/manifest.json', '/icon.png', '/shared/theme.css', '/shared/foundation.css'];
 
@@ -16,6 +20,7 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
 
+  const requestUrl = new URL(event.request.url);
   const url = new URL(event.request.url);
   const isHTML = event.request.mode === 'navigate' || event.request.headers.get('accept')?.includes('text/html');
 
@@ -27,11 +32,13 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
           return response;
         })
+        .catch(() => caches.match(event.request).then((cached) => cached || caches.match(new URL('index.html', SCOPE_URL).toString())))
         .catch(() => caches.match(event.request).then((cached) => cached || caches.match('/index.html')))
     );
     return;
   }
 
+  if (requestUrl.origin !== self.location.origin) return;
   if (url.origin !== self.location.origin) return;
 
   event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
