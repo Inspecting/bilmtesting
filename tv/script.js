@@ -76,7 +76,11 @@ async function renderSections() {
 
     const row = document.createElement('div');
     row.className = 'card-row';
-    data.forEach((item) => row.appendChild(createCard(item)));
+    if (!data.length) {
+      row.innerHTML = '<p class="card-row-empty">Unable to load right now. Please try again in a moment.</p>';
+    } else {
+      data.forEach((item) => row.appendChild(createCard(item)));
+    }
 
     block.appendChild(header);
     block.appendChild(row);
