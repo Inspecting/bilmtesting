@@ -65,10 +65,6 @@ function card(game) {
   return `<a class="game-card" href="${href}">
     <img src="${game.image || 'https://placehold.co/400x250/0f172a/e2e8f0?text=Bilm+Game'}" alt="${game.title} thumbnail" loading="lazy">
     <div class="game-copy"><h3>${game.title}</h3><p>${game.category}</p></div>
-  const href = game.path ? base(`/games/play.html?game=${encodeURIComponent(game.path)}`) : '#';
-  return `<a class="game-card" href="${href}">
-    <img src="${game.image || 'https://placehold.co/400x250/0f172a/e2e8f0?text=Bilm+Game'}" alt="${game.title || 'Game'} thumbnail" loading="lazy">
-    <div class="game-copy"><h3>${game.title || 'Untitled'}</h3><p>${game.category || 'Game'}</p></div>
   </a>`;
 }
 
@@ -84,13 +80,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   const catalog = await loadCatalog();
   const allGames = catalog.map(normalizeGame).filter((game) => game.embedSrc);
   persistGameSelection(allGames);
-  const allGames = await loadCatalog();
   statusEl.textContent = `${allGames.length} games loaded`;
 
   function render(query = '') {
     const q = query.trim().toLowerCase();
     const filtered = allGames.filter((g) => !q || `${g.title} ${g.category} ${g.description}`.toLowerCase().includes(q));
-    const filtered = allGames.filter((g) => !q || `${g.title || ''} ${g.category || ''} ${g.description || ''}`.toLowerCase().includes(q));
     const grouped = normalizeGroups(filtered);
     sectionsEl.innerHTML = '';
     emptyEl.hidden = filtered.length !== 0;
@@ -109,6 +103,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     clearBtn.hidden = !searchInput.value.trim();
     render(searchInput.value);
   });
+
   clearBtn.addEventListener('click', () => {
     searchInput.value = '';
     clearBtn.hidden = true;
