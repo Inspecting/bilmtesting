@@ -1,18 +1,10 @@
-function detectBasePath() {
-  const parts = window.location.pathname.split('/').filter(Boolean);
-  const appRoots = new Set(['home', 'movies', 'tv', 'games', 'search', 'settings', 'random', 'test', 'shared', 'index.html']);
-  if (!parts.length || appRoots.has(parts[0])) return '';
-  return `/${parts[0]}`;
-}
-
-function withBase(path) {
-  const normalized = path.startsWith('/') ? path : `/${path}`;
-  return `${detectBasePath()}${normalized}`;
-}
+const appWithBase = window.bilmTheme?.withBase || ((path) => path);
 
 const TMDB_API_KEY = '3ade810499876bb5672f40e54960e6a2';
 const params = new URLSearchParams(window.location.search);
 const tmdbId = params.get('id');
+const isAnime = params.get('anime') === '1';
+const animeId = params.get('aid') || tmdbId;
 
 const iframe = document.getElementById('videoPlayer');
 const fullscreenBtn = document.getElementById('fullscreenBtn');
@@ -38,18 +30,34 @@ const moreLikeStatus = document.getElementById('moreLikeStatus');
 const serverBtn = document.getElementById('serverBtn');
 const serverDropdown = document.getElementById('serverDropdown');
 const serverItems = [...serverDropdown.querySelectorAll('.serverDropdownItem')];
+const languageBtn = document.getElementById('languageBtn');
+const languageDropdown = document.getElementById('languageDropdown');
+const languageItems = languageDropdown ? [...languageDropdown.querySelectorAll('[data-language]')] : [];
 
 let currentSeason = 1;
 let currentEpisode = 1;
 const initialSettings = window.bilmTheme?.getSettings?.();
 const supportedServers = ['embedmaster', 'vidsrc', 'godrive', 'multiembed'];
-const normalizeServer = (server) => (supportedServers.includes(server) ? server : 'embedmaster');
-let currentServer = normalizeServer(initialSettings?.defaultServer || 'embedmaster');
+const animeSupportedServers = ['vidnest'];
+const visibleServerItems = serverItems.filter((item) => {
+  const server = item.getAttribute('data-server');
+  const supported = isAnime ? animeSupportedServers.includes(server) : supportedServers.includes(server);
+  item.style.display = supported ? '' : 'none';
+  return supported;
+});
+const normalizeServer = (server) => {
+  if (isAnime) return animeSupportedServers.includes(server) ? server : 'vidnest';
+  return supportedServers.includes(server) ? server : 'embedmaster';
+};
+let currentServer = normalizeServer(isAnime ? (initialSettings?.animeDefaultServer || 'vidnest') : (initialSettings?.defaultServer || 'embedmaster'));
+let currentLanguage = params.get('lang') === 'dub' ? 'dub' : 'sub';
 let totalSeasons = 1;
 let episodesPerSeason = {};
 let seasonEpisodeMemory = {};
 let continueWatchingEnabled = initialSettings?.continueWatching !== false;
 let mediaDetails = null;
+const API_COOLDOWN_MS = 250;
+const apiCooldownByHost = new Map();
 
 function toSlug(value) {
   return (value || '')
@@ -102,9 +110,44 @@ let similarEnded = false;
 let similarActive = false;
 const similarShowIds = new Set();
 
+
+async function waitForApiCooldown(url) {
+  let host = 'default';
+  try {
+    host = new URL(url, window.location.origin).host || 'default';
+  } catch {
+    host = 'default';
+  }
+  const now = Date.now();
+  const nextAllowedAt = apiCooldownByHost.get(host) || 0;
+  const waitMs = nextAllowedAt - now;
+  if (waitMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  apiCooldownByHost.set(host, Date.now() + API_COOLDOWN_MS);
+}
 async function fetchJSON(url) {
   try {
+    await waitForApiCooldown(url);
     const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function postJSON(url, body) {
+  try {
+    await waitForApiCooldown(url);
+    const isAniList = /graphql\.anilist\.co/i.test(url);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: isAniList
+        ? { 'Content-Type': 'text/plain;charset=UTF-8' }
+        : { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body)
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } catch {
@@ -189,7 +232,7 @@ function createMoreLikeCard(show) {
       : 'https://via.placeholder.com/140x210?text=No+Image',
     source: 'TMDB',
     rating: show.vote_average,
-    link: `${withBase('/tv/show.html')}?id=${show.id}`
+    link: `${appWithBase('/tv/show.html')}?id=${show.id}`
   };
 
   return window.BilmMediaCard.createMediaCard({
@@ -517,7 +560,7 @@ document.addEventListener('fullscreenchange', () => {
 });
 
 // Server dropdown toggle
-serverBtn.addEventListener('click', (e) => {
+if (serverBtn) serverBtn.addEventListener('click', (e) => {
   e.stopPropagation();
   const isOpen = serverDropdown.style.display === 'flex';
   if (isOpen) {
@@ -533,15 +576,19 @@ serverBtn.addEventListener('click', (e) => {
 document.addEventListener('click', () => {
   serverDropdown.style.display = 'none';
   serverBtn.setAttribute('aria-expanded', 'false');
+  if (languageDropdown && languageBtn) {
+    languageDropdown.style.display = 'none';
+    languageBtn.setAttribute('aria-expanded', 'false');
+  }
 });
 
 function setActiveServer(server) {
-  serverItems.forEach(i => i.classList.toggle('active', i.getAttribute('data-server') === server));
+  visibleServerItems.forEach((i) => i.classList.toggle('active', i.getAttribute('data-server') === server));
   currentServer = server;
 }
 
 // Server selection
-serverItems.forEach(item => {
+visibleServerItems.forEach((item) => {
   item.addEventListener('click', () => {
     if (item.classList.contains('active')) return;
 
@@ -558,11 +605,18 @@ if (currentServer) {
 }
 
 window.addEventListener('bilm:theme-changed', (event) => {
-  const newServer = normalizeServer(event.detail?.defaultServer);
+  const newServer = normalizeServer(isAnime ? event.detail?.animeDefaultServer : event.detail?.defaultServer);
+  let shouldRefresh = false;
+
   if (newServer && newServer !== currentServer) {
     setActiveServer(newServer);
+    shouldRefresh = true;
+  }
+
+  if (shouldRefresh) {
     updateIframe();
   }
+
   const nextContinueWatching = event.detail?.continueWatching !== false;
   if (nextContinueWatching !== continueWatchingEnabled) {
     continueWatchingEnabled = nextContinueWatching;
@@ -629,10 +683,14 @@ function loadProgress() {
 }
 
 function buildTvUrl(server) {
-  if (!tmdbId && !imdbId) return '';
   normalizeSeasonEpisodeState();
   const season = currentSeason;
   const episode = currentEpisode;
+  if (isAnime) {
+    if (!animeId) return '';
+    return `https://vidnest.fun/anime/${encodeURIComponent(animeId)}/${episode}/${currentLanguage}`;
+  }
+  if (!tmdbId && !imdbId) return '';
   switch (server) {
     case 'vidsrc': {
       const id = imdbId || tmdbId;
@@ -653,14 +711,10 @@ function buildTvUrl(server) {
   }
 }
 
+
+
 function buildReloadableUrl(url) {
-  try {
-    const parsed = new URL(url, window.location.href);
-    parsed.searchParams.set('bilm_refresh', Date.now().toString());
-    return parsed.toString();
-  } catch {
-    return `${url}${url.includes('?') ? '&' : '?'}bilm_refresh=${Date.now()}`;
-  }
+  return `${url}${url.includes('?') ? '&' : '?'}bilm_refresh=${Date.now()}`;
 }
 
 function refreshIframe(url) {
@@ -680,7 +734,7 @@ function updateIframe() {
   normalizeSeasonEpisodeState();
   saveProgress();
 
-  const idToUse = imdbId || tmdbId;
+  const idToUse = isAnime ? animeId : (imdbId || tmdbId);
   if (!idToUse) {
     console.warn('No valid ID for embed URL.');
     iframe.removeAttribute('sandbox');
@@ -906,6 +960,67 @@ episodeSelect.addEventListener('change', () => {
 
 // Fetch TMDB data for season/episode info
 async function fetchTMDBData() {
+  if (isAnime) {
+    if (!animeId) {
+      mediaTitle.textContent = 'Unknown anime';
+      mediaMeta.textContent = 'Anime id unavailable';
+      updateIframe();
+      return;
+    }
+
+    const query = `
+      query ($id: Int!) {
+        Media(id: $id, type: ANIME) {
+          id
+          title { romaji english }
+          coverImage { large medium }
+          startDate { year month day }
+          averageScore
+          episodes
+        }
+      }
+    `;
+
+    const payload = await postJSON('/api/anilist', { query, variables: { id: Number(animeId) } });
+    const details = payload?.data?.Media;
+    const title = details?.title?.english || details?.title?.romaji || 'Unknown anime';
+    const year = details?.startDate?.year || 'N/A';
+    mediaTitle.textContent = title;
+    mediaMeta.textContent = `${year} • Anime`;
+    document.title = `Bilm 💜 - ${title}`;
+
+    totalSeasons = 1;
+    const episodeCount = Math.max(1, Number(details?.episodes) || Number(params.get('episodes')) || 1);
+    episodesPerSeason = { 1: episodeCount };
+    currentSeason = 1;
+    currentEpisode = Math.max(1, Number(params.get('episode')) || 1);
+    if (currentEpisode > episodeCount) currentEpisode = episodeCount;
+
+    populateSeasons(totalSeasons);
+    populateEpisodes(episodeCount);
+    updateControls();
+
+    mediaDetails = {
+      id: animeId,
+      title,
+      year,
+      poster: details?.coverImage?.large || details?.coverImage?.medium || 'https://via.placeholder.com/140x210?text=No+Image',
+      link: `${appWithBase('/tv/show.html')}?anime=1&aid=${animeId}&type=tv`,
+      rating: details?.averageScore ? details.averageScore / 10 : null,
+      certification: 'N/A',
+      genreIds: [],
+      genreSlugs: []
+    };
+
+    updateFavoriteButton(loadList(FAVORITES_KEY).some(item => item.key === `anime-tv-${animeId}` || item.anilistId === Number(animeId)));
+    updateWatchLaterButton(loadList(WATCH_LATER_KEY).some(item => item.key === `anime-tv-${animeId}` || item.anilistId === Number(animeId)));
+    loadPlaybackNote();
+    updateIframe();
+    startContinueWatchingTimer();
+    if (moreLikeBox) moreLikeBox.style.display = 'none';
+    return;
+  }
+
   if (!tmdbId) {
     mediaTitle.textContent = 'Unknown title';
     mediaMeta.textContent = 'Release date unavailable';
@@ -959,7 +1074,7 @@ async function fetchTMDBData() {
       rating: details.vote_average,
       genreIds: details.genres?.map(genre => genre.id) || [],
       genreSlugs: details.genres?.map(genre => toSlug(genre.name)) || [],
-      link: `${withBase('/tv/show.html')}?id=${tmdbId}`,
+      link: `${appWithBase('/tv/show.html')}?id=${tmdbId}`,
       certification
     };
 
@@ -1002,6 +1117,30 @@ async function fetchTMDBData() {
 }
 
 fetchTMDBData();
+
+function setActiveLanguage(language) {
+  currentLanguage = language === 'dub' ? 'dub' : 'sub';
+  languageItems.forEach(i => i.classList.toggle('active', i.getAttribute('data-language') === currentLanguage));
+}
+
+if (languageBtn && languageDropdown) {
+  languageBtn.style.display = isAnime ? 'flex' : 'none';
+  languageBtn.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const isOpen = languageDropdown.style.display === 'flex';
+    languageDropdown.style.display = isOpen ? 'none' : 'flex';
+    languageBtn.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+  });
+  languageItems.forEach((item) => {
+    item.addEventListener('click', () => {
+      setActiveLanguage(item.getAttribute('data-language'));
+      updateIframe();
+      languageDropdown.style.display = 'none';
+      languageBtn.setAttribute('aria-expanded', 'false');
+    });
+  });
+  setActiveLanguage(currentLanguage);
+}
 if (favoriteBtn) {
   favoriteBtn.addEventListener('click', (event) => {
     event.stopPropagation();

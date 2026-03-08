@@ -1,3 +1,7 @@
+<div class="global-banner" id="globalBanner" role="status" aria-live="polite">
+  <p class="global-banner-text">Data migration is in progress. You can dismiss this notice.</p>
+  <button type="button" id="globalBannerCloseBtn" class="global-banner-close" aria-label="Dismiss migration message">×</button>
+</div>
 <header>
   <nav class="navbar" role="navigation" aria-label="Primary navigation">
     <!-- Logo -->
@@ -98,3 +102,27 @@
     <button id="mobileSearchCloseBtn" aria-label="Clear search input">×</button>
   </div>
 </div>
+
+<div id="sharedChatWidget" class="shared-chat-widget" hidden>
+  <button type="button" id="sharedChatToggle" class="shared-chat-toggle" aria-label="Open shared account chat" aria-expanded="false">
+    💬
+  </button>
+  <section id="sharedChatPanel" class="shared-chat-panel" aria-label="Shared account chat" hidden>
+    <header class="shared-chat-header">
+      <h3>Shared Chat</h3>
+      <button type="button" id="sharedChatClose" class="shared-chat-close" aria-label="Close chat">×</button>
+    </header>
+    <div id="sharedChatMessages" class="shared-chat-messages" role="log" aria-live="polite"></div>
+    <form id="sharedChatForm" class="shared-chat-form">
+      <input type="text" id="sharedChatInput" maxlength="300" placeholder="Type a message" autocomplete="off" />
+      <button type="button" id="sharedChatRefreshBtn" class="shared-chat-refresh" aria-label="Refresh shared chat messages" title="Refresh">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+          <polyline points="21 3 21 9 15 9" />
+        </svg>
+      </button>
+      <button type="submit">Send</button>
+    </form>
+  </section>
+</div>
+

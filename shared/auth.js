@@ -10,6 +10,126 @@
     measurementId: 'G-3481XXPLFV'
   };
 
+
+  const DATA_API_BASE = 'https://data-api.watchbilm.org';
+  const TRANSFER_API_DISABLE_KEY = 'bilm-transfer-api-disabled';
+
+  let transferApiDisabled = localStorage.getItem(TRANSFER_API_DISABLE_KEY) === '1';
+
+  function getTransferUserId(user) {
+    const uid = String(user?.uid || '').trim();
+    if (!uid) throw new Error('Missing account identifier for cloud transfer.');
+    // The transfer API already namespaces user IDs with "user-" internally.
+    return uid.replace(/^user-/i, '');
+  }
+
+  function disableTransferApi(reason) {
+    if (transferApiDisabled) return;
+    transferApiDisabled = true;
+    try {
+      localStorage.setItem(TRANSFER_API_DISABLE_KEY, '1');
+    } catch {}
+    console.warn(`Data API disabled for this browser session (${reason}). Using Firestore fallback.`);
+  }
+
+  function shouldDisableTransferApi(error) {
+    const message = String(error?.message || '').toLowerCase();
+    return error instanceof TypeError || message.includes('failed to fetch') || message.includes('networkerror');
+  }
+
+  async function getTransferAuthHeader(user) {
+    if (!user || typeof user.getIdToken !== 'function') {
+      throw new Error('Cloud transfer requires a signed-in Firebase session.');
+    }
+    const idToken = await user.getIdToken();
+    if (!idToken) throw new Error('Missing Firebase auth token for cloud transfer.');
+    return `Bearer ${idToken}`;
+  }
+
+  function extractSnapshotFromApiPayload(payload) {
+    if (!payload) return null;
+    if (payload.schema === 'bilm-backup-v1') return payload;
+    const candidates = [payload.export, payload.snapshot, payload.value, payload.data, payload.backup, payload.cloudBackup?.snapshot];
+    for (const candidate of candidates) {
+      if (candidate && typeof candidate === 'object' && candidate.schema === 'bilm-backup-v1') {
+        return candidate;
+      }
+      if (typeof candidate === 'string') {
+        const parsed = safeParse(candidate, null);
+        if (parsed?.schema === 'bilm-backup-v1') return parsed;
+      }
+    }
+    return null;
+  }
+
+  async function saveSnapshotToTransferApi(user, userId, snapshot) {
+    if (transferApiDisabled) return false;
+    const url = `${DATA_API_BASE}/?userId=${encodeURIComponent(userId)}`;
+    const authorization = await getTransferAuthHeader(user);
+    const normalizedSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : null;
+    if (!normalizedSnapshot) {
+      throw new Error('Cannot save cloud snapshot: invalid payload format.');
+    }
+    const body = JSON.stringify({
+      userId,
+      data: normalizedSnapshot,
+      value: JSON.stringify(normalizedSnapshot)
+    });
+    const headers = {
+      'content-type': 'application/json',
+      authorization
+    };
+
+    let response;
+    try {
+      response = await fetch(url, { method: 'POST', headers, body });
+    } catch (error) {
+      if (shouldDisableTransferApi(error)) disableTransferApi('network/CORS failure on save');
+      throw error;
+    }
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`Data API save failed (${response.status})${detail ? `: ${detail.slice(0, 160)}` : ''}`);
+    }
+    return true;
+  }
+
+  async function loadSnapshotFromTransferApi(user, userId) {
+    if (transferApiDisabled) return null;
+    const url = `${DATA_API_BASE}/?userId=${encodeURIComponent(userId)}`;
+    const authorization = await getTransferAuthHeader(user);
+    let response;
+    try {
+      response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          accept: 'application/json,text/plain;q=0.9,*/*;q=0.8',
+          authorization
+        }
+      });
+    } catch (error) {
+      if (shouldDisableTransferApi(error)) disableTransferApi('network/CORS failure on load');
+      throw error;
+    }
+
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      throw new Error(`Data API load failed (${response.status})${detail ? `: ${detail.slice(0, 160)}` : ''}`);
+    }
+
+    const text = await response.text();
+    const parsed = safeParse(text, null);
+    if (!parsed && !text.trim()) return null;
+    const snapshot = extractSnapshotFromApiPayload(parsed || text);
+    if (!snapshot && text) {
+      const second = safeParse(String(text), null);
+      return second?.schema === 'bilm-backup-v1' ? second : null;
+    }
+    return snapshot;
+  }
+
   const subscribers = new Set();
   let initPromise;
   let modules;
@@ -33,6 +153,7 @@
   let snapshotListenerReady = false;
 
   const MIN_SAVE_INTERVAL_MS = 15000;
+  const AUTOSYNC_HEARTBEAT_MS = 15000;
 
   const SYNC_ENABLED_KEY = 'bilm-sync-enabled';
   const SYNC_META_KEY = 'bilm-sync-meta';
@@ -41,6 +162,9 @@
     'bilm-favorites',
     'bilm-watch-later',
     'bilm-continue-watching',
+    'bilm-watch-history',
+    'bilm-search-history',
+    'bilm-shared-chat',
     'bilm-history-movies',
     'bilm-history-tv'
   ]);
@@ -49,6 +173,9 @@
     /^tmdb-/,
     /^theme-/
   ];
+  const LOCAL_ONLY_LOCAL_STORAGE_KEYS = new Set([
+    'bilm-global-message-dismissed-migrating-data'
+  ]);
   const BACKUP_SESSION_ALLOWLIST = [
     /^bilm-/,
     /^tmdb-/
@@ -66,11 +193,33 @@
 
   function getListItemKey(item) {
     if (!item || typeof item !== 'object') return '';
-    return String(item.key || item.tmdbId || item.id || '').trim();
+    const explicitKey = String(item.key || '').trim();
+    if (explicitKey) return explicitKey;
+
+    const chatId = String(item.id || '').trim();
+    if (chatId) return `chat:${chatId}`;
+
+    const chatText = String(item.text || '').trim().toLowerCase();
+    if (chatText) {
+      const chatCreatedAt = Number(item.createdAtMs || item.updatedAt || item.timestamp || 0) || 0;
+      return `chat:${chatCreatedAt}:${chatText}`;
+    }
+
+    const normalizedQuery = String(item.query || '').trim().toLowerCase();
+    if (normalizedQuery) return `search:${normalizedQuery}`;
+
+    const mediaType = String(item.type || 'media').trim().toLowerCase();
+    const mediaId = String(item.tmdbId || item.id || '').trim();
+    if (mediaId) return `${mediaType}:${mediaId}`;
+
+    const titleFallback = String(item.title || '').trim().toLowerCase();
+    if (titleFallback) return `${mediaType}:${titleFallback}`;
+
+    return '';
   }
 
   function getItemUpdatedAt(item) {
-    return Number(item?.updatedAt || item?.timestamp || item?.savedAt || 0) || 0;
+    return Number(item?.updatedAt || item?.createdAtMs || item?.timestamp || item?.savedAt || 0) || 0;
   }
 
   function mergeTombstoneMaps(...maps) {
@@ -199,6 +348,28 @@
     return allowlist.some((pattern) => pattern.test(String(key || '')));
   }
 
+  function isLocalOnlyStorageKey(key) {
+    return LOCAL_ONLY_LOCAL_STORAGE_KEYS.has(String(key || ''));
+  }
+
+  function captureLocalOnlyStorageState() {
+    const captured = {};
+    LOCAL_ONLY_LOCAL_STORAGE_KEYS.forEach((key) => {
+      const value = localStorage.getItem(key);
+      if (value !== null) {
+        captured[key] = value;
+      }
+    });
+    return captured;
+  }
+
+  function restoreLocalOnlyStorageState(capturedState = {}) {
+    Object.entries(capturedState).forEach(([key, value]) => {
+      if (typeof value === 'undefined' || value === null) return;
+      localStorage.setItem(key, value);
+    });
+  }
+
   function readStorage(storage, allowlist = []) {
     return Object.entries(storage).reduce((all, [key, value]) => {
       if (allowlist.length && !shouldIncludeStorageKey(key, allowlist)) {
@@ -215,6 +386,9 @@
     delete localState[SYNC_ENABLED_KEY];
     delete localState[SYNC_META_KEY];
     delete localState[SYNC_DEVICE_ID_KEY];
+    LOCAL_ONLY_LOCAL_STORAGE_KEYS.forEach((key) => {
+      delete localState[key];
+    });
     return {
       schema: 'bilm-backup-v1',
       exportedAt: new Date().toISOString(),
@@ -262,6 +436,7 @@
       const syncPreference = localStorage.getItem(SYNC_ENABLED_KEY);
       const syncMetaRaw = localStorage.getItem(SYNC_META_KEY);
       const deviceIdRaw = localStorage.getItem(SYNC_DEVICE_ID_KEY);
+      const localOnlyState = captureLocalOnlyStorageState();
       localStorage.clear();
       sessionStorage.clear();
 
@@ -278,6 +453,7 @@
 
       if (syncMetaRaw) localStorage.setItem(SYNC_META_KEY, syncMetaRaw);
       if (deviceIdRaw) localStorage.setItem(SYNC_DEVICE_ID_KEY, deviceIdRaw);
+      restoreLocalOnlyStorageState(localOnlyState);
 
       writeSyncMeta({
         lastCloudPullAt: Date.now(),
@@ -297,15 +473,28 @@
   }
 
   function hasMeaningfulLocalData() {
-    const localKeys = Object.keys(localStorage).filter((key) => ![SYNC_ENABLED_KEY, SYNC_META_KEY, SYNC_DEVICE_ID_KEY].includes(key));
+    const localKeys = Object.keys(localStorage).filter((key) => (
+      ![SYNC_ENABLED_KEY, SYNC_META_KEY, SYNC_DEVICE_ID_KEY].includes(key)
+      && !isLocalOnlyStorageKey(key)
+    ));
     if (localKeys.length > 0) return true;
     if (sessionStorage.length > 0) return true;
     return String(document.cookie || '').trim().length > 0;
   }
 
+  function hasLocalMergeableData() {
+    for (const storageKey of MERGEABLE_LIST_KEYS) {
+      if (localStorage.getItem(storageKey) === null) continue;
+      const list = readJsonArray(localStorage.getItem(storageKey));
+      if (list.length > 0) return true;
+    }
+    return false;
+  }
+
   function shouldApplyRemoteSnapshot(snapshot) {
     if (!snapshot || snapshot.schema !== 'bilm-backup-v1') return false;
     if (!hasMeaningfulLocalData()) return true;
+    if (hasLocalMergeableData()) return false;
 
     const cloudUpdatedAtMs = Number(snapshot?.meta?.updatedAtMs || 0);
     if (!cloudUpdatedAtMs) return false;
@@ -317,13 +506,19 @@
     return cloudUpdatedAtMs > freshnessFloor;
   }
 
+  function getSnapshotUpdatedAtMs(snapshot) {
+    if (!snapshot || snapshot.schema !== 'bilm-backup-v1') return 0;
+    return Number(snapshot?.meta?.updatedAtMs || 0) || 0;
+  }
+
   async function saveLocalSnapshotToCloud(reason = 'auto') {
     await init();
     const user = auth?.currentUser;
-    if (!user || !isSyncEnabled() || pendingAutosync || !snapshotListenerReady) return false;
+    const forceReasons = new Set(['manual', 'pagehide', 'visibility-hidden']);
+    if (!user || !isSyncEnabled() || pendingAutosync) return false;
+    if (!snapshotListenerReady && !forceReasons.has(reason)) return false;
 
     const now = Date.now();
-    const forceReasons = new Set(['manual', 'pagehide', 'visibility-hidden']);
     if (!forceReasons.has(reason) && now - lastSaveAttemptAt < MIN_SAVE_INTERVAL_MS) return false;
 
     const snapshot = collectBackupData();
@@ -461,7 +656,7 @@
       saveLocalSnapshotToCloud('interval').catch((error) => {
         console.warn('Autosync interval save failed:', error);
       });
-    }, 3000);
+    }, AUTOSYNC_HEARTBEAT_MS);
   }
 
   function stopAutosyncLoop() {
@@ -611,6 +806,11 @@
     return modules;
   }
 
+
+
+  function getFirestoreInstance() {
+    return firestore;
+  }
   async function init() {
     if (initPromise) return initPromise;
 
@@ -735,6 +935,9 @@
 
   const api = {
     init,
+    getFirestore() {
+      return getFirestoreInstance();
+    },
     async signUp(email, password) {
       await init();
       return withAuthRetry(() => modules.createUserWithEmailAndPassword(auth, String(email || '').trim(), password));
@@ -769,6 +972,20 @@
       const user = await requireAuth();
       const cleaned = String(username || '').trim();
       if (cleaned.length > 30) throw new Error('Username must be 30 characters or fewer.');
+
+      const normalizedNext = normalizeUsername(cleaned);
+      const normalizedPrev = normalizeUsername(user.displayName);
+      const nextRef = normalizedNext ? modules.doc(firestore, 'usernames', normalizedNext) : null;
+      const prevRef = normalizedPrev ? modules.doc(firestore, 'usernames', normalizedPrev) : null;
+
+      if (nextRef && normalizedNext !== normalizedPrev) {
+        const takenDoc = await modules.getDoc(nextRef);
+        const existingUid = String(takenDoc.data()?.uid || '').trim();
+        if (existingUid && existingUid !== user.uid) {
+          throw new Error('That username is already taken. Please choose another.');
+        }
+      }
+
       await modules.updateProfile(user, { displayName: cleaned || null });
       await modules.setDoc(modules.doc(firestore, 'users', user.uid), {
         profile: {
@@ -777,13 +994,27 @@
           updatedAt: modules.serverTimestamp()
         }
       }, { merge: true });
-      if (cleaned) {
-        await modules.setDoc(modules.doc(firestore, 'usernames', normalizeUsername(cleaned)), {
+
+      if (prevRef && normalizedPrev !== normalizedNext) {
+        try {
+          const previousDoc = await modules.getDoc(prevRef);
+          const previousUid = String(previousDoc.data()?.uid || '').trim();
+          if (previousUid === user.uid) {
+            await modules.deleteDoc(prevRef);
+          }
+        } catch (error) {
+          console.warn('Previous username cleanup skipped:', error);
+        }
+      }
+
+      if (nextRef) {
+        await modules.setDoc(nextRef, {
           uid: user.uid,
           username: cleaned,
           updatedAt: modules.serverTimestamp()
         }, { merge: true });
       }
+
       currentUser = { ...user, displayName: cleaned || null };
       notifySubscribers(auth.currentUser || currentUser);
       return cleaned;
@@ -799,10 +1030,21 @@
       const user = await requireAuth();
       if (!password) throw new Error('Password is required to delete your account.');
       await api.reauthenticate(password);
+
       const usernameKey = normalizeUsername(user.displayName);
+      const usernameRef = usernameKey ? modules.doc(firestore, 'usernames', usernameKey) : null;
+
       await modules.deleteDoc(modules.doc(firestore, 'users', user.uid));
-      if (usernameKey) {
-        await modules.deleteDoc(modules.doc(firestore, 'usernames', usernameKey));
+      if (usernameRef) {
+        try {
+          const usernameDoc = await modules.getDoc(usernameRef);
+          const mappedUid = String(usernameDoc.data()?.uid || '').trim();
+          if (mappedUid === user.uid) {
+            await modules.deleteDoc(usernameRef);
+          }
+        } catch (error) {
+          console.warn('Username cleanup during delete skipped:', error);
+        }
       }
       await modules.deleteUser(user);
     },
@@ -825,8 +1067,7 @@
     },
     async saveCloudSnapshot(snapshot) {
       const user = await requireAuth();
-      const currentDoc = await modules.getDoc(modules.doc(firestore, 'users', user.uid));
-      const cloudSnapshot = (currentDoc.data() || {})?.cloudBackup?.snapshot || null;
+      const cloudSnapshot = await api.getCloudSnapshot();
       const mergedSnapshot = mergeSnapshots(cloudSnapshot, snapshot || null) || snapshot || null;
       const payload = {
         ...(mergedSnapshot || {}),
@@ -840,13 +1081,25 @@
       const signature = snapshotSignature(payload);
       lastAppliedCloudSignature = signature;
       lastUploadedCloudSignature = signature;
+
+      const userId = getTransferUserId(user);
+      let savedToTransferApi = false;
+      try {
+        await saveSnapshotToTransferApi(user, userId, payload);
+        savedToTransferApi = true;
+      } catch (error) {
+        console.warn('Data API save failed (Firestore save will still proceed):', error);
+      }
+
       await modules.setDoc(modules.doc(firestore, 'users', user.uid), {
         cloudBackup: {
           schema: 'bilm-cloud-sync-v1',
           updatedAt: modules.serverTimestamp(),
-          snapshot: payload
+          snapshot: payload,
+          transferApiMirrored: savedToTransferApi
         }
       }, { merge: true });
+
       writeSyncMeta({
         lastCloudPushAt: Date.now(),
         lastLocalChangeAt: Date.now()
@@ -854,9 +1107,22 @@
     },
     async getCloudSnapshot() {
       const user = await requireAuth();
+      const userId = getTransferUserId(user);
+      let transferSnapshot = null;
+      try {
+        transferSnapshot = await loadSnapshotFromTransferApi(user, userId);
+      } catch (error) {
+        console.warn('Data API load failed (falling back to Firestore data):', error);
+      }
+
       const docSnap = await modules.getDoc(modules.doc(firestore, 'users', user.uid));
       const data = docSnap.data() || {};
-      return data.cloudBackup?.snapshot || null;
+      const firestoreSnapshot = data.cloudBackup?.snapshot || null;
+      const mergedSnapshot = mergeSnapshots(firestoreSnapshot, transferSnapshot);
+      if (mergedSnapshot) return mergedSnapshot;
+      return getSnapshotUpdatedAtMs(transferSnapshot) >= getSnapshotUpdatedAtMs(firestoreSnapshot)
+        ? transferSnapshot
+        : firestoreSnapshot;
     },
     async syncFromCloudNow() {
       await init();
@@ -866,5 +1132,25 @@
       return saveLocalSnapshotToCloud(reason);
     }
   };
+  Object.defineProperty(window, 'bilmAuthModules', {
+    configurable: true,
+    enumerable: false,
+    get() {
+      if (!modules) return null;
+      return {
+        addDoc: modules.addDoc,
+        collection: modules.collection,
+        deleteDoc: modules.deleteDoc,
+        doc: modules.doc,
+        getFirestore: () => firestore,
+        limit: modules.limit,
+        onSnapshot: modules.onSnapshot,
+        orderBy: modules.orderBy,
+        query: modules.query
+      };
+    }
+  });
+
   window.bilmAuth = api;
 })();
+

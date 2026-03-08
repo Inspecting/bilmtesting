@@ -5,7 +5,8 @@ function detectBasePath() {
   const parts = window.location.pathname.split('/').filter(Boolean);
   const appRoots = new Set(['home', 'movies', 'tv', 'games', 'search', 'settings', 'random', 'test', 'shared', 'index.html']);
   if (!parts.length || appRoots.has(parts[0])) return '';
-  return `/${parts[0]}`;
+  if (parts.length > 1 && appRoots.has(parts[1])) return `/${parts[0]}`;
+  return '';
 }
 
 function withBase(path) {
@@ -66,9 +67,9 @@ function esc(value) {
 
 const builtInServers = [
   {
-    key: 'viking',
-    label: 'Viking',
-    template: 'https://vembed.stream/play/{id}'
+    key: 'vidsrc',
+    label: 'VidSrc',
+    template: 'https://vidsrc-embed.ru/embed/movie/{imdbOrId}'
   },
   {
     key: 'embedmaster',
@@ -76,9 +77,9 @@ const builtInServers = [
     template: 'https://embedmaster.link/movie/{id}'
   },
   {
-    key: 'vidsrc',
-    label: 'VidSrc',
-    template: 'https://vidsrc-embed.ru/embed/movie/{imdbOrId}'
+    key: 'viking',
+    label: 'Viking',
+    template: 'https://vembed.stream/play/{id}'
   }
 ];
 
@@ -145,3 +146,4 @@ window.TestMovieApp = {
   removeCustomServer,
   buildServerUrl
 };
+

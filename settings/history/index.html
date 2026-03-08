@@ -3,35 +3,102 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bilm — History</title>
-  <meta name="theme-color" content="#0b1020" />
+  <title>Bilm 💜 - History</title>
+
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0a0a0a" />
+
   <link rel="manifest" href="../../manifest.json" />
   <link rel="apple-touch-icon" href="../../icon.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
   <link rel="stylesheet" href="../../shared/theme.css" />
-  <link rel="stylesheet" href="../../shared/foundation.css" />
-  <link rel="stylesheet" href="../../shared/navbar.css" />
-  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="../../settings/history/style.css" />
   <script src="../../shared/access.js"></script>
   <script src="../../shared/theme.js"></script>
-  <script src="../../shared/foundation.js"></script>
-</head>
+      <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+        </head>
 <body>
   <div id="navbarContainer"></div>
-  <main class="history-page page-frame page-stack">
-    <section class="surface-panel panel">
-      <p class="section-label">History</p>
-      <h1>History Manager</h1>
-      <div class="tabs">
-        <button class="tab is-active" data-key="bilm-search-history">Search</button>
-        <button class="tab" data-key="bilm-continue-watching">Continue</button>
-        <button class="tab" data-key="bilm-favorites">Favorites</button>
-        <button class="tab" data-key="bilm-watch-later">Watch Later</button>
+
+  <main>
+    <section class="history-shell" aria-labelledby="historyTitle">
+      <header class="history-header">
+        <div>
+          <h1 id="historyTitle">History</h1>
+          <p class="history-subtitle">Search smarter, clean faster, and keep only what matters.</p>
+        </div>
+        <button id="compactViewBtn" class="control-btn" type="button" aria-pressed="false">Compact view</button>
+      </header>
+
+      <div class="history-switch" role="tablist" aria-label="History type">
+        <button id="searchTabBtn" class="tab-btn is-active" type="button" role="tab" aria-selected="true">Search History</button>
+        <button id="watchTabBtn" class="tab-btn" type="button" role="tab" aria-selected="false">Watch History</button>
       </div>
-      <div class="actions"><button id="clearAll" type="button">Clear current list</button></div>
-      <ul id="historyList" class="list"></ul>
+
+      <section class="panel panel-stats" aria-label="History stats">
+        <div class="stat-item">
+          <span class="stat-label">Visible entries</span>
+          <strong id="visibleCount" class="stat-value">0</strong>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Total entries</span>
+          <strong id="totalCount" class="stat-value">0</strong>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Newest</span>
+          <strong id="newestLabel" class="stat-value">—</strong>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Oldest</span>
+          <strong id="oldestLabel" class="stat-value">—</strong>
+        </div>
+      </section>
+
+      <section class="panel filters-panel" aria-label="Filters and sorting">
+        <div class="input-wrap">
+          <label for="searchFilterInput" class="sr-only">Filter history text</label>
+          <input id="searchFilterInput" type="search" placeholder="Filter by title or query…" autocomplete="off" />
+        </div>
+
+        <div class="button-row" id="dateRangeFilters" role="group" aria-label="Date range">
+          <button class="filter-btn is-active" type="button" data-range="all">All time</button>
+          <button class="filter-btn" type="button" data-range="today">Today</button>
+          <button class="filter-btn" type="button" data-range="week">7 days</button>
+          <button class="filter-btn" type="button" data-range="month">30 days</button>
+        </div>
+
+        <div class="button-row" id="sortControls" role="group" aria-label="Sort history">
+          <button id="sortRecentBtn" class="control-btn is-active" type="button">Newest first</button>
+          <button id="sortOldBtn" class="control-btn" type="button">Oldest first</button>
+        </div>
+
+        <div id="watchFilters" class="button-row" role="group" aria-label="Watch history type" hidden>
+          <button class="type-filter-btn is-active" type="button" data-filter="all">All watch</button>
+          <button class="type-filter-btn" type="button" data-filter="movie">Movies</button>
+          <button class="type-filter-btn" type="button" data-filter="tv">TV Shows</button>
+        </div>
+      </section>
+
+      <section class="panel actions-panel" aria-label="Actions">
+        <button id="clearHistoryBtn" class="control-btn danger" type="button">Clear all search history</button>
+        <button id="selectModeBtn" class="control-btn" type="button">Select</button>
+        <button id="selectAllBtn" class="control-btn" type="button" hidden>Select all visible</button>
+        <button id="cancelSelectBtn" class="control-btn" type="button" hidden>Cancel</button>
+        <button id="deleteSelectedBtn" class="control-btn danger" type="button" hidden>Delete selected</button>
+      </section>
+
+      <section id="historyScrollRegion" class="history-scroll-region" aria-label="History entries" tabindex="0">
+        <ul id="historyList" class="history-list" aria-live="polite"></ul>
+        <p id="historyLoadState" class="history-load-state" aria-live="polite"></p>
+      </section>
     </section>
   </main>
+
   <script src="../../shared/navbar.js" defer></script>
-  <script src="./script.js" defer></script>
-</body>
+  <script src="../../settings/history/script.js"></script>
+    </body>
 </html>

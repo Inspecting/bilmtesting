@@ -3,36 +3,57 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bilm — TV Shows</title>
-  <meta name="theme-color" content="#0b1020" />
+  <title>Bilm 💜 - TV Shows</title>
+
+  <!-- PWA & iOS fullscreen support -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0a0a0a" />
+
+  <!-- Manifest & App Icon -->
   <link rel="manifest" href="../manifest.json" />
   <link rel="apple-touch-icon" href="../icon.png" />
+
+  <!-- Fonts & Styles -->
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="../shared/theme.css" />
-  <link rel="stylesheet" href="../shared/foundation.css" />
-  <link rel="stylesheet" href="../shared/navbar.css" />
   <link rel="stylesheet" href="./style.css" />
   <script src="../shared/access.js"></script>
   <script src="../shared/theme.js"></script>
-  <script src="../shared/foundation.js"></script>
+
+  <script>
+    const routeParams = new URLSearchParams(window.location.search);
+    const showId = routeParams.get('id');
+    if (showId) {
+      window.location.replace(`./show.html?id=${encodeURIComponent(showId)}`);
+    }
+  </script>
 </head>
 <body>
-  <div id="navbarContainer"></div>
 
-  <main class="catalog-page page-frame page-stack">
-    <header class="catalog-head surface-panel">
-      <p class="section-label">TV</p>
-      <h1>Discover TV shows</h1>
-      <p>Explore weekly trending, popular, and top-rated series.</p>
-    </header>
+<!-- Navbar placeholder -->
+<div id="navbarContainer"></div>
 
-    <section class="surface-panel quick-filter-wrap">
-      <div id="quickFilters" class="quick-filters" aria-label="TV section filters"></div>
-    </section>
+<!-- TV sections rendered here -->
+<main>
+  <div class="content-mode-toggle" role="tablist" aria-label="Content mode">
+    <button id="regularModeButton" class="mode-toggle-button is-active" type="button" data-mode="regular" role="tab" aria-selected="true">Regular</button>
+    <button id="animeModeButton" class="mode-toggle-button" type="button" data-mode="anime" role="tab" aria-selected="false">Anime</button>
+  </div>
+  <div id="quickFilters" class="quick-filters" aria-label="Quick category filters"></div>
+  <div id="tvSections"></div>
+  <div id="animeQuickFilters" class="quick-filters is-hidden" aria-label="Anime quick category filters"></div>
+  <div id="animeSections" class="is-hidden"></div>
+</main>
 
-    <div id="sections" class="section-stack"></div>
-  </main>
+<script src="../shared/navbar.js" defer></script>
 
-  <script src="../shared/navbar.js" defer></script>
-  <script src="./script.js" defer></script>
+<script src="../shared/media-card.js"></script>
+
+
+<!-- Load TV logic -->
+<script src="./script.js"></script>
+
 </body>
 </html>

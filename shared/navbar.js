@@ -1,19 +1,32 @@
-const foundation = window.BilmFoundation;
-
 function detectBasePath() {
-  if (foundation?.detectBasePath) return foundation.detectBasePath();
   const appRoots = new Set(['home', 'movies', 'tv', 'games', 'search', 'settings', 'random', 'test', 'shared', 'index.html']);
+
+  const scriptSrc = document.currentScript?.src;
+  if (scriptSrc) {
+    try {
+      const scriptPath = new URL(scriptSrc, window.location.href).pathname;
+      const sharedIndex = scriptPath.lastIndexOf('/shared/');
+      if (sharedIndex >= 0) {
+        const prefix = scriptPath.slice(0, sharedIndex);
+        return prefix || '';
+      }
+    } catch {
+      // Fall back to pathname parsing.
+    }
+  }
+
   const parts = window.location.pathname.split('/').filter(Boolean);
   if (!parts.length || appRoots.has(parts[0])) return '';
-  return `/${parts[0]}`;
+  if (parts.length > 1 && appRoots.has(parts[1])) return `/${parts[0]}`;
+  return '';
 }
+
+const BASE_PATH = detectBasePath();
 
 function withBase(path) {
-  if (foundation?.withBase) return foundation.withBase(path);
   const normalized = path.startsWith('/') ? path : `/${path}`;
-  return `${detectBasePath()}${normalized}`;
+  return `${BASE_PATH}${normalized}`;
 }
-
 function loadAuthScript() {
   return new Promise((resolve, reject) => {
     if (window.bilmAuth) {
@@ -43,19 +56,200 @@ function loadAuthScript() {
   if (!container) return;
 
   document.body.classList.add('has-fixed-navbar');
-  foundation?.initPage?.();
 
-  const shadow = container.attachShadow({ mode: 'open' });
+  const shadow = container.shadowRoot || container.attachShadow({ mode: 'open' });
 
-  const [htmlRes, cssRes] = await Promise.all([
-    fetch(withBase('/shared/navbar.html')),
-    fetch(withBase('/shared/navbar.css'))
-  ]);
+  let html = '';
+  let css = '';
+  try {
+    const [htmlRes, cssRes] = await Promise.all([
+      fetch(withBase('/shared/navbar.html')),
+      fetch(withBase('/shared/navbar.css'))
+    ]);
 
-  const html = await htmlRes.text();
-  const css = await cssRes.text();
+    if (!htmlRes.ok || !cssRes.ok) {
+      throw new Error(`Navbar assets failed to load (html=${htmlRes.status}, css=${cssRes.status})`);
+    }
+
+    html = await htmlRes.text();
+    css = await cssRes.text();
+  } catch (error) {
+    console.error('Failed to load navbar assets:', error);
+    document.body.classList.remove('has-fixed-navbar');
+    return;
+  }
 
   shadow.innerHTML = `<style>${css}</style>${html}`;
+
+  const globalBanner = shadow.getElementById('globalBanner');
+  const globalBannerCloseBtn = shadow.getElementById('globalBannerCloseBtn');
+
+
+  const chatWidget = shadow.getElementById('sharedChatWidget');
+  const chatToggle = shadow.getElementById('sharedChatToggle');
+  const chatPanel = shadow.getElementById('sharedChatPanel');
+  const chatClose = shadow.getElementById('sharedChatClose');
+  const chatForm = shadow.getElementById('sharedChatForm');
+  const chatInput = shadow.getElementById('sharedChatInput');
+  const chatRefreshBtn = shadow.getElementById('sharedChatRefreshBtn');
+  const CHAT_REFRESH_COOLDOWN_MS = 5000;
+  let chatRefreshCooldownUntil = 0;
+  const chatMessages = shadow.getElementById('sharedChatMessages');
+  let chatCurrentUser = null;
+  let chatRemoteMessages = [];
+  let chatPendingMessages = [];
+  let authApiInstance = null;
+  let chatCloudSaveTimer = null;
+  const CHAT_CLOUD_SAVE_DEBOUNCE_MS = 250;
+  const CHAT_STORAGE_KEY = 'bilm-shared-chat';
+
+
+  function setChatNotice(message) {
+    if (!chatMessages) return;
+    if (!message) {
+      renderChatMessages(composeVisibleChatMessages());
+      return;
+    }
+    chatMessages.innerHTML = '';
+    const notice = document.createElement('p');
+    notice.className = 'shared-chat-empty';
+    notice.textContent = message;
+    chatMessages.appendChild(notice);
+  }
+
+  function formatChatTime(ts) {
+    const value = Number(ts || 0) || Date.now();
+    return new Date(value).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function normalizeChatMessages(messages = []) {
+    return messages
+      .map((entry) => ({
+        ...entry,
+        createdAtMs: Number(entry?.createdAtMs || Date.now()) || Date.now(),
+        text: String(entry?.text || ''),
+        author: String(entry?.author || 'Account')
+      }))
+      .filter((entry) => entry.text.trim().length > 0)
+      .sort((a, b) => a.createdAtMs - b.createdAtMs);
+  }
+
+  function composeVisibleChatMessages() {
+    return normalizeChatMessages([...(chatRemoteMessages || []), ...(chatPendingMessages || [])]);
+  }
+
+  function loadStoredChatMessages() {
+    const stored = storage.getJSON(CHAT_STORAGE_KEY, []);
+    return normalizeChatMessages(Array.isArray(stored) ? stored : []);
+  }
+
+  function saveStoredChatMessages(messages) {
+    const normalized = normalizeChatMessages(messages).slice(-120);
+    storage.setJSON(CHAT_STORAGE_KEY, normalized);
+    chatRemoteMessages = normalized;
+    scheduleChatCloudSave();
+  }
+
+  function scheduleChatCloudSave() {
+    if (!authApiInstance || !chatCurrentUser || typeof authApiInstance.scheduleCloudSave !== 'function') return;
+    window.clearTimeout(chatCloudSaveTimer);
+    chatCloudSaveTimer = window.setTimeout(() => {
+      authApiInstance.scheduleCloudSave('manual').catch((error) => {
+        console.warn('Shared chat cloud save failed:', error);
+      });
+    }, CHAT_CLOUD_SAVE_DEBOUNCE_MS);
+  }
+
+  function refreshChatMessages() {
+    chatRemoteMessages = loadStoredChatMessages();
+    renderChatMessages(composeVisibleChatMessages());
+  }
+
+  function setChatRefreshCooldown() {
+    if (!chatRefreshBtn) return;
+    chatRefreshCooldownUntil = Date.now() + CHAT_REFRESH_COOLDOWN_MS;
+    chatRefreshBtn.disabled = true;
+    window.setTimeout(() => {
+      if (!chatRefreshBtn) return;
+      if (Date.now() < chatRefreshCooldownUntil) return;
+      chatRefreshBtn.disabled = false;
+      chatRefreshBtn.removeAttribute('aria-busy');
+    }, CHAT_REFRESH_COOLDOWN_MS);
+  }
+
+  function renderChatMessages(messages = []) {
+    if (!chatMessages) return;
+    chatMessages.innerHTML = '';
+    if (!messages.length) {
+      const empty = document.createElement('p');
+      empty.className = 'shared-chat-empty';
+      empty.textContent = 'No messages yet.';
+      chatMessages.appendChild(empty);
+      return;
+    }
+
+    messages.forEach((entry) => {
+      const row = document.createElement('article');
+      row.className = 'shared-chat-message';
+
+      const meta = document.createElement('div');
+      meta.className = 'shared-chat-message-meta';
+
+      const left = document.createElement('span');
+      const author = String(entry.author || 'Account').trim() || 'Account';
+      left.textContent = `${author} • ${formatChatTime(entry.createdAtMs)}`;
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.textContent = entry.pending ? 'Pending' : 'Delete';
+      del.disabled = Boolean(entry.pending);
+      del.addEventListener('click', async () => {
+        if (entry.pending) return;
+        try {
+          const current = loadStoredChatMessages();
+          saveStoredChatMessages(current.filter((message) => message.id !== entry.id));
+          renderChatMessages(composeVisibleChatMessages());
+        } catch (error) {
+          console.warn('Failed to delete chat message:', error);
+        }
+      });
+
+      meta.append(left, del);
+
+      const body = document.createElement('p');
+      body.textContent = String(entry.text || '');
+
+      row.append(meta, body);
+      chatMessages.appendChild(row);
+    });
+
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  function toggleChatPanel(nextOpen) {
+    if (!chatPanel || !chatToggle) return;
+    const open = Boolean(nextOpen);
+    chatPanel.hidden = !open;
+    chatToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open && chatInput) chatInput.focus();
+  }
+
+  // Always start collapsed on a fresh page load.
+  toggleChatPanel(false);
+
+  if (chatToggle) {
+    chatToggle.addEventListener('click', () => {
+      toggleChatPanel(chatPanel?.hidden === true);
+    });
+  }
+
+  if (chatClose) {
+    chatClose.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleChatPanel(false);
+    });
+  }
 
   const pathParts = location.pathname.split('/').filter(Boolean);
   const appSections = new Set(['home', 'movies', 'tv', 'games', 'search', 'settings', 'random', 'test']);
@@ -93,6 +287,45 @@ function loadAuthScript() {
     }
   };
 
+
+  const GLOBAL_BANNER_DISMISS_KEY = 'bilm-global-message-dismissed-migrating-data';
+
+  function isGlobalBannerDismissed() {
+    try {
+      return localStorage.getItem(GLOBAL_BANNER_DISMISS_KEY) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  function dismissGlobalBanner() {
+    if (globalBanner) {
+      globalBanner.hidden = true;
+      globalBanner.setAttribute('aria-hidden', 'true');
+    }
+    try {
+      localStorage.setItem(GLOBAL_BANNER_DISMISS_KEY, '1');
+    } catch {
+      // If storage is blocked, keep UI behavior without crashing.
+    }
+  }
+
+  function setupGlobalBanner() {
+    if (!globalBanner) return;
+    const dismissed = isGlobalBannerDismissed();
+    globalBanner.hidden = dismissed;
+    globalBanner.setAttribute('aria-hidden', dismissed ? 'true' : 'false');
+
+    if (!dismissed && globalBannerCloseBtn && globalBannerCloseBtn.dataset.bound !== '1') {
+      globalBannerCloseBtn.dataset.bound = '1';
+      globalBannerCloseBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        dismissGlobalBanner();
+      });
+    }
+  }
+
   function loadList(key) {
     const list = storage.getJSON(key, []);
     return Array.isArray(list) ? list : [];
@@ -106,10 +339,11 @@ function loadAuthScript() {
     const settings = window.bilmTheme?.getSettings?.() || {};
     if (settings.searchHistory === false || settings.incognito === true) return;
     const history = loadList(SEARCH_HISTORY_KEY);
+    const normalizedQuery = query.toLowerCase();
     const next = [
       { query, updatedAt: Date.now() },
-      ...history
-    ];
+      ...history.filter((entry) => String(entry?.query || '').trim().toLowerCase() !== normalizedQuery)
+    ].slice(0, 120);
     saveList(SEARCH_HISTORY_KEY, next);
   }
 
@@ -158,6 +392,8 @@ function loadAuthScript() {
     window.location.href = `${withBase('/search/')}?q=${encodeURIComponent(outgoingQuery)}`;
   }
 
+  setupGlobalBanner();
+
   // Desktop nav buttons
   const buttons = shadow.querySelectorAll('nav.navbar button[data-page]');
   buttons.forEach(btn => {
@@ -193,19 +429,85 @@ function loadAuthScript() {
 
   const accountBtn = shadow.getElementById('navbarAccountBtn');
   loadAuthScript().then(async (authApi) => {
+    authApiInstance = authApi;
     await authApi.init();
+
+    if (chatWidget) {
+      chatWidget.hidden = false;
+    }
+
     const syncAccountButton = (user) => {
+      chatCurrentUser = user || null;
+
       if (!accountBtn) return;
       accountBtn.textContent = user ? (user.displayName || user.email || 'Account') : 'Account';
       accountBtn.title = user ? 'Open account settings / log out' : 'Log in or create account';
     };
 
+    refreshChatMessages();
+    chatPendingMessages = [];
+
     syncAccountButton(authApi.getCurrentUser());
     authApi.onAuthStateChanged(syncAccountButton);
+    authApi.onCloudSnapshotChanged(() => {
+      refreshChatMessages();
+    });
+    window.addEventListener('storage', (event) => {
+      if (event.key !== CHAT_STORAGE_KEY) return;
+      refreshChatMessages();
+    });
 
-    if (accountBtn) {
-      accountBtn.addEventListener('click', () => {
-        window.location.href = withBase('/settings/account/');
+    if (chatRefreshBtn) {
+      chatRefreshBtn.addEventListener('click', () => {
+        if (Date.now() < chatRefreshCooldownUntil) return;
+        chatRefreshBtn.setAttribute('aria-busy', 'true');
+        refreshChatMessages();
+        setChatRefreshCooldown();
+      });
+    }
+
+    if (chatForm && chatInput) {
+      chatForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const text = chatInput.value.trim();
+        if (!text) return;
+
+        const author = chatCurrentUser?.displayName || chatCurrentUser?.email || 'Guest';
+        const authorUid = chatCurrentUser?.uid || 'local';
+
+        const optimisticId = `pending-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const optimisticMessage = {
+          id: optimisticId,
+          pending: true,
+          text,
+          author,
+          authorUid,
+          createdAtMs: Date.now()
+        };
+
+        chatPendingMessages.push(optimisticMessage);
+        renderChatMessages(composeVisibleChatMessages());
+        chatInput.value = '';
+
+        try {
+          const current = loadStoredChatMessages();
+          current.push({
+            id: `msg-${optimisticMessage.createdAtMs}-${Math.random().toString(36).slice(2, 8)}`,
+            key: `chat:${optimisticMessage.createdAtMs}:${Math.random().toString(36).slice(2, 8)}`,
+            text,
+            author: optimisticMessage.author,
+            authorUid,
+            createdAtMs: optimisticMessage.createdAtMs,
+            updatedAt: optimisticMessage.createdAtMs
+          });
+          saveStoredChatMessages(current);
+          chatPendingMessages = chatPendingMessages.filter((entry) => entry.id !== optimisticId);
+          renderChatMessages(composeVisibleChatMessages());
+        } catch (error) {
+          chatPendingMessages = chatPendingMessages.filter((entry) => entry.id !== optimisticId);
+          renderChatMessages(composeVisibleChatMessages());
+          console.warn('Failed to send shared chat message:', error);
+        }
       });
     }
   }).catch(() => {
@@ -282,3 +584,4 @@ function loadAuthScript() {
     });
   }
 })();
+
