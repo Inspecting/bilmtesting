@@ -2,6 +2,7 @@
   const LEGACY_TAB_STORAGE_KEYS = ['bilm-chat-open-tabs-v1', 'bilm-chat-active-tab-v1'];
   const ACTIVE_CONVERSATION_STORAGE_KEY = 'bilm-chat-active-conversation-v1';
   const POLL_INTERVAL_MS = 12000;
+  const MESSAGE_PAGE_SIZE = 20;
   const MESSAGE_LENGTH_LIMIT = 2000;
   const MESSAGE_INPUT_MIN_HEIGHT = 40;
   const MESSAGE_INPUT_MAX_HEIGHT = 180;
@@ -352,6 +353,23 @@
     return Array.isArray(messages) ? messages : [];
   }
 
+  function normalizeMessageList(messages) {
+    return (Array.isArray(messages) ? messages : [])
+      .filter(Boolean)
+      .sort((left, right) => {
+        const leftCreatedAt = Number(left?.createdAtMs || 0) || 0;
+        const rightCreatedAt = Number(right?.createdAtMs || 0) || 0;
+        if (leftCreatedAt !== rightCreatedAt) return leftCreatedAt - rightCreatedAt;
+        return String(left?.id || '').localeCompare(String(right?.id || ''));
+      })
+      .slice(-MESSAGE_PAGE_SIZE);
+  }
+
+  function setMessagesForConversation(conversationId, messages) {
+    if (!conversationId) return;
+    state.messagesByConversation.set(conversationId, normalizeMessageList(messages));
+  }
+
   function clearMessageSelection() {
     state.selectionMode = false;
     state.selectedMessageIds = new Set();
@@ -449,9 +467,9 @@
     renderConversationList();
     renderActiveConversationHeader();
     syncMainView();
-    renderMessages();
+    renderMessages({ scrollMode: 'bottom' });
     if (fetch) {
-      void fetchMessages(nextConversationId, { quiet: true });
+      void fetchMessages(nextConversationId, { quiet: true, scrollMode: 'bottom' });
     }
   }
 
@@ -548,10 +566,13 @@
     });
   }
 
-  function renderMessages() {
+  function renderMessages({ scrollMode = 'auto' } = {}) {
     if (!elements.messageList) return;
     const conversation = getActiveConversation();
-    const shouldStickToBottom = !state.selectionMode && isMessageListNearBottom();
+    const previousScrollTop = elements.messageList.scrollTop;
+    const wasNearBottom = isMessageListNearBottom();
+    const shouldStickToBottom = scrollMode === 'bottom'
+      || (!state.selectionMode && scrollMode === 'auto' && wasNearBottom);
     elements.messageList.innerHTML = '';
     if (!conversation) return;
     const messages = getMessagesForConversation(conversation.id);
@@ -604,6 +625,11 @@
     updateSelectionControls();
     if (shouldStickToBottom) {
       elements.messageList.scrollTop = elements.messageList.scrollHeight;
+      return;
+    }
+    if (scrollMode !== 'top') {
+      const maxScrollTop = Math.max(0, elements.messageList.scrollHeight - elements.messageList.clientHeight);
+      elements.messageList.scrollTop = Math.min(previousScrollTop, maxScrollTop);
     }
   }
 
@@ -631,15 +657,15 @@
     elements.activeChatMeta.textContent = `Updated ${formatDateTime(conversation.lastMessageAtMs || conversation.updatedAtMs)}.`;
   }
 
-  async function fetchMessages(conversationId, { quiet = false } = {}) {
+  async function fetchMessages(conversationId, { quiet = false, scrollMode = 'auto' } = {}) {
     if (!conversationId) return;
     if (!state.currentUser) return;
     try {
-      const payload = await authedRequest(`/conversations/${encodeURIComponent(conversationId)}/messages?limit=180&before=${Number.MAX_SAFE_INTEGER}`);
+      const payload = await authedRequest(`/conversations/${encodeURIComponent(conversationId)}/messages?limit=${MESSAGE_PAGE_SIZE}&before=${Number.MAX_SAFE_INTEGER}`);
       const nextMessages = Array.isArray(payload.messages) ? payload.messages : [];
-      state.messagesByConversation.set(conversationId, nextMessages);
+      setMessagesForConversation(conversationId, nextMessages);
       if (state.selectionMode && conversationId === state.activeConversationId) {
-        const allowed = new Set(nextMessages.map((message) => String(message?.id || '').trim()).filter(Boolean));
+        const allowed = new Set(getMessagesForConversation(conversationId).map((message) => String(message?.id || '').trim()).filter(Boolean));
         state.selectedMessageIds = new Set(getSelectedMessageIds().filter((id) => allowed.has(id)));
       }
       if (payload.conversation?.id) {
@@ -650,7 +676,7 @@
       }
       if (conversationId === state.activeConversationId) {
         renderActiveConversationHeader();
-        renderMessages();
+        renderMessages({ scrollMode });
       }
     } catch (error) {
       if (isAuthError(error)) {
@@ -802,7 +828,7 @@
       }
       if (nextMessage?.id) {
         const current = state.messagesByConversation.get(conversation.id) || [];
-        state.messagesByConversation.set(conversation.id, [...current, nextMessage]);
+        setMessagesForConversation(conversation.id, [...current, nextMessage]);
       }
       elements.messageInput.value = '';
       updateMessageCharCount();
@@ -811,6 +837,9 @@
       renderConversationList();
       renderActiveConversationHeader();
       renderMessages();
+      if (Number(payload?.trimmedMessageCount || 0) > 0) {
+        void fetchMessages(conversation.id, { quiet: true, scrollMode: 'auto' });
+      }
       void markChatReadyIfPossible();
     } catch (error) {
       if (isAuthError(error)) {

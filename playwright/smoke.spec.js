@@ -491,7 +491,7 @@ test('watch player menus are mutually exclusive', async ({ page }) => {
   await expect(page.locator('#subtitleDropdown')).toBeHidden();
 });
 
-test('watch player keeps selected server on embed timeout and keeps refresh available', async ({ page }) => {
+test('watch player falls back when the selected embed server times out', async ({ page }) => {
   await mockAuthScript(page, { loggedIn: false });
 
   await page.route('**/storage-api.watchbilm.org/media/tmdb/movie/447365', async (route) => {
@@ -530,10 +530,18 @@ test('watch player keeps selected server on embed timeout and keeps refresh avai
     await route.abort();
   });
 
+  await page.route(/https:\/\/vidsrc-embed\.ru\/.*/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/html',
+      body: '<!doctype html><title>VidSrc ready</title>'
+    });
+  });
+
   await page.goto('/movies/watch/viewer.html?id=447365', { waitUntil: 'domcontentloaded' });
 
-  await expect(page.locator('#playerStatus')).toContainText('Tap refresh or choose another server.', { timeout: 20_000 });
-  await expect(page.locator('#serverDropdown .serverDropdownItem.active')).toHaveAttribute('data-server', 'embedmaster');
+  await expect(page.locator('#serverDropdown .serverDropdownItem.active')).toHaveAttribute('data-server', 'vidsrc', { timeout: 20_000 });
+  await expect(page.locator('#videoPlayer')).toHaveAttribute('src', /https:\/\/vidsrc-embed\.ru\/embed\/movie\/tt6791350\?bilm_refresh=/);
   await expect(page.locator('#refreshBtn')).toBeVisible();
   await expect(page.locator('#refreshBtn')).toBeEnabled();
 });

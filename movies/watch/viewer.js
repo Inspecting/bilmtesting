@@ -47,6 +47,7 @@ const subtitleItems = subtitleDropdown ? [...subtitleDropdown.querySelectorAll('
 
 const initialSettings = window.bilmTheme?.getSettings?.();
 const supportedServers = ['embedmaster', 'multiembed', 'vidking', 'vidsrc'];
+const fallbackServerOrder = ['vidsrc', 'multiembed', 'vidking', 'embedmaster'];
 const animeSupportedServers = ['vidnest'];
 const visibleServerItems = serverItems.filter((item) => {
   const server = item.getAttribute('data-server');
@@ -395,13 +396,43 @@ function getServerLabel(server) {
   return String(item?.textContent || server || 'server').trim();
 }
 
+function getFallbackServer(failedServer) {
+  if (isAnime) return '';
+  return fallbackServerOrder.find((server) => (
+    server !== failedServer
+    && supportedServers.includes(server)
+    && !isServerTemporarilyUnhealthy(server)
+    && buildMovieUrl(server)
+  )) || '';
+}
+
 function resolveMovieEmbedRequest() {
   const server = currentServer;
   const url = buildMovieUrl(server);
   return { server, url };
 }
 
-async function loadMovieEmbedUrlWithRetry({ requestId, url, server }) {
+function tryFallbackServerAfterFailure(failedServer) {
+  const fallbackServer = getFallbackServer(failedServer);
+  if (!fallbackServer) return false;
+  const fallbackUrl = buildMovieUrl(fallbackServer);
+  if (!fallbackUrl) return false;
+
+  const failedLabel = getServerLabel(failedServer);
+  const fallbackLabel = getServerLabel(fallbackServer);
+  setActiveServer(fallbackServer);
+  setPlayerStatus(`${failedLabel} did not load. Trying ${fallbackLabel}...`, 'warning');
+  const requestId = ++iframeLoadRequestId;
+  void loadMovieEmbedUrlWithRetry({
+    requestId,
+    url: fallbackUrl,
+    server: fallbackServer,
+    allowFallback: false
+  });
+  return true;
+}
+
+async function loadMovieEmbedUrlWithRetry({ requestId, url, server, allowFallback = true }) {
   const requestStartedAtMs = Date.now();
   const loader = window.BilmIframeLoader;
   if (!loader?.loadWithRetry) {
@@ -478,6 +509,8 @@ async function loadMovieEmbedUrlWithRetry({ requestId, url, server }) {
     }
     return;
   }
+
+  if (allowFallback && tryFallbackServerAfterFailure(server)) return;
 
   setPlayerStatus(`We couldn't load ${serverLabel}. Tap refresh or choose another server.`, 'error');
   console.error('[player] load exhausted', {

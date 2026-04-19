@@ -96,10 +96,12 @@ const CORS_ALLOWED_ORIGINS = new Set([
 ]);
 
 const BASE_SECURITY_HEADERS = Object.freeze({
+  'strict-transport-security': 'max-age=31536000; includeSubDomains; preload',
   'x-content-type-options': 'nosniff',
   'referrer-policy': 'strict-origin-when-cross-origin',
   'x-frame-options': 'SAMEORIGIN',
-  'permissions-policy': 'camera=(), microphone=(), geolocation=()'
+  'permissions-policy': 'camera=(), microphone=(), geolocation=()',
+  'x-permitted-cross-domain-policies': 'none'
 });
 
 const mimeTypes = new Map([
