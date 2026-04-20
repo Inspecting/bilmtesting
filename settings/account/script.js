@@ -136,6 +136,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const SYNC_ENABLED_KEY = 'bilm-sync-enabled';
   const SYNC_META_KEY = 'bilm-sync-meta';
   const SYNC_DEVICE_ID_KEY = 'bilm-sync-device-id';
+  const LINKED_SHARE_CACHE_KEY = 'bilm-linked-share-cache-v1';
   const INCOGNITO_BACKUP_KEY = 'bilm-incognito-backup';
   const INCOGNITO_SEARCH_MAP_KEY = 'bilm-incognito-search-map';
   const DEBUG_ISSUE_LOCAL_KEY = 'debug-local-issue';
@@ -154,6 +155,11 @@ document.addEventListener('DOMContentLoaded', () => {
       description: 'Share each account\'s favorite movies and shows.'
     },
     {
+      key: 'watchLater',
+      label: 'Watch Later',
+      description: 'Share saved titles each account wants to watch later.'
+    },
+    {
       key: 'watchHistory',
       label: 'Watch History',
       description: 'Share watched titles and timestamps.'
@@ -162,11 +168,6 @@ document.addEventListener('DOMContentLoaded', () => {
       key: 'searchHistory',
       label: 'Search History',
       description: 'Share previous searches for faster recommendations.'
-    },
-    {
-      key: 'secretChat',
-      label: 'Secret Chat',
-      description: 'Share secure chat context (only for chat-active accounts).'
     }
   ]);
 
@@ -174,8 +175,7 @@ document.addEventListener('DOMContentLoaded', () => {
     links: [],
     incomingRequests: [],
     pendingRequests: [],
-    activeLink: null,
-    chatReady: false
+    activeLink: null
   };
   let accountLinkModalMode = 'create';
   let accountLinkEditingLinkId = '';
@@ -266,6 +266,7 @@ document.addEventListener('DOMContentLoaded', () => {
     delete localState[SYNC_ENABLED_KEY];
     delete localState[SYNC_META_KEY];
     delete localState[SYNC_DEVICE_ID_KEY];
+    delete localState[LINKED_SHARE_CACHE_KEY];
     delete localState[INCOGNITO_BACKUP_KEY];
     delete localState[INCOGNITO_SEARCH_MAP_KEY];
     delete localState[DEBUG_ISSUE_LOCAL_KEY];
@@ -572,14 +573,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function renderAccountLinkScopeOptions({ selectedScopes = {}, chatEligible = false } = {}) {
+  function renderAccountLinkScopeOptions({ selectedScopes = {} } = {}) {
     if (!accountLinkScopeOptions) return;
     const normalizedScopes = normalizeAccountLinkShareScopes(selectedScopes);
     accountLinkScopeOptions.innerHTML = '';
     ACCOUNT_LINK_SCOPE_DEFINITIONS.forEach((definition) => {
-      if (definition.key === 'secretChat' && chatEligible !== true && normalizedScopes.secretChat !== true) {
-        return;
-      }
       const row = document.createElement('label');
       row.className = 'scope-option';
 
@@ -605,9 +603,7 @@ document.addEventListener('DOMContentLoaded', () => {
       accountLinkScopeOptions.appendChild(row);
     });
     if (accountLinkScopeHint) {
-      accountLinkScopeHint.textContent = chatEligible
-        ? 'Secret Chat is available because this partner account already has chat activity.'
-        : 'Secret Chat appears only when the partner account already has chat history.';
+      accountLinkScopeHint.textContent = 'Only selected categories are shared. Chat messages are never included.';
     }
   }
 
@@ -627,47 +623,21 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!isValidEmail(normalizedEmail)) {
       accountLinkTargetCapabilities = null;
       if (!quiet && accountLinkEmailStatus) {
-        accountLinkEmailStatus.textContent = 'Enter a valid email to check chat eligibility.';
+        accountLinkEmailStatus.textContent = 'Enter a valid email to continue.';
       }
       return null;
     }
+    accountLinkTargetCapabilities = {
+      ok: true,
+      targetEmail: normalizedEmail
+    };
     if (accountLinkEmailStatus && !quiet) {
-      accountLinkEmailStatus.textContent = 'Checking account availability...';
+      accountLinkEmailStatus.textContent = 'Email ready. The secure request is checked when you submit.';
     }
-    try {
-      const payload = await window.bilmAuth.getAccountLinkTargetCapabilities(normalizedEmail);
-      accountLinkTargetCapabilities = payload || null;
-      const enforceBlockingChecks = accountLinkModalMode === 'create';
-      if (accountLinkEmailStatus) {
-        if (enforceBlockingChecks && payload?.requesterBlocked) {
-          accountLinkEmailStatus.textContent = 'You already have a pending or active link. Unlink first.';
-        } else if (enforceBlockingChecks && payload?.targetBlocked) {
-          accountLinkEmailStatus.textContent = 'That account already has a pending or active link.';
-        } else if (payload?.accountFound !== true) {
-          accountLinkEmailStatus.textContent = 'No account found yet for this email. They can still approve later once they sign in.';
-        } else {
-          accountLinkEmailStatus.textContent = payload?.chatEligible
-            ? 'Account found. Secret Chat is available.'
-            : 'Account found. Secret Chat stays hidden until this account uses chat.';
-        }
-      }
-      const selectedScopes = getAccountLinkModalSelectedScopes();
-      if (payload?.chatEligible !== true) {
-        selectedScopes.secretChat = false;
-      }
-      renderAccountLinkScopeOptions({
-        selectedScopes,
-        chatEligible: payload?.chatEligible === true
-      });
-      setAccountLinkModalScopeSelection(selectedScopes);
-      return payload;
-    } catch (error) {
-      accountLinkTargetCapabilities = null;
-      if (accountLinkEmailStatus) {
-        accountLinkEmailStatus.textContent = `Could not verify account: ${error.message || 'request failed.'}`;
-      }
-      return null;
-    }
+    renderAccountLinkScopeOptions({
+      selectedScopes: getAccountLinkModalSelectedScopes()
+    });
+    return accountLinkTargetCapabilities;
   }
 
   function queueAccountLinkCapabilitiesLookup(targetEmail) {
@@ -693,8 +663,7 @@ document.addEventListener('DOMContentLoaded', () => {
         links: [],
         incomingRequests: [],
         pendingRequests: [],
-        activeLink: null,
-        chatReady: false
+        activeLink: null
       };
       setAccountLinkSummary('Sign in to request, approve, or manage account links.');
       if (accountLinkActiveCard) accountLinkActiveCard.hidden = true;
@@ -720,8 +689,7 @@ document.addEventListener('DOMContentLoaded', () => {
         links: Array.isArray(payload?.links) ? payload.links : [],
         incomingRequests: Array.isArray(payload?.incomingRequests) ? payload.incomingRequests : [],
         pendingRequests: Array.isArray(payload?.pendingRequests) ? payload.pendingRequests : [],
-        activeLink: payload?.activeLink && typeof payload.activeLink === 'object' ? payload.activeLink : null,
-        chatReady: payload?.chatReady === true
+        activeLink: payload?.activeLink && typeof payload.activeLink === 'object' ? payload.activeLink : null
       };
     } catch (error) {
       setAccountLinkSummary(`Could not load account links: ${error.message || 'request failed.'}`);
@@ -866,17 +834,16 @@ document.addEventListener('DOMContentLoaded', () => {
       accountLinkModalTitle.textContent = 'Approve Account Link';
       accountLinkModalDescription.textContent = 'Choose what you want to share, then approve the request.';
       submitAccountLinkBtn.textContent = 'Approve Request';
-      accountLinkEmailStatus.textContent = 'Checking partner capabilities...';
+      accountLinkEmailStatus.textContent = 'Partner email is locked for this request.';
     } else {
       accountLinkModalTitle.textContent = 'Edit Sharing Scope';
       accountLinkModalDescription.textContent = 'Adjust what this linked account can receive from you.';
       submitAccountLinkBtn.textContent = 'Save Sharing';
-      accountLinkEmailStatus.textContent = 'Checking partner capabilities...';
+      accountLinkEmailStatus.textContent = 'Partner email is locked for this active link.';
     }
 
     renderAccountLinkScopeOptions({
-      selectedScopes: initialScopes,
-      chatEligible: false
+      selectedScopes: initialScopes
     });
     setAccountLinkModalScopeSelection(initialScopes);
     openModal(accountLinkModal);
@@ -905,17 +872,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (String(accountLinkTargetCapabilities?.targetEmail || '').trim().toLowerCase() !== targetEmail) {
       await lookupAccountLinkCapabilities(targetEmail, { quiet: true });
-    }
-    if (accountLinkModalMode === 'create') {
-      if (accountLinkTargetCapabilities?.requesterBlocked) {
-        throw new Error('You already have a pending or active account link.');
-      }
-      if (accountLinkTargetCapabilities?.targetBlocked) {
-        throw new Error('That account already has a pending or active account link.');
-      }
-    }
-    if (selectedScopes.secretChat && accountLinkTargetCapabilities?.chatEligible !== true) {
-      throw new Error('Secret Chat is unavailable until the partner account has chat activity.');
     }
 
     updateAccountLinkActionButtons({ busy: true, submitLabel: 'Sending...' });
@@ -1164,14 +1120,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const selected = getAccountLinkModalSelectedScopes();
     if (!isValidEmail(accountLinkEmailInput.value)) {
       accountLinkTargetCapabilities = null;
-      selected.secretChat = false;
       renderAccountLinkScopeOptions({
-        selectedScopes: selected,
-        chatEligible: false
+        selectedScopes: selected
       });
       setAccountLinkModalScopeSelection(selected);
       if (accountLinkEmailStatus) {
-        accountLinkEmailStatus.textContent = 'Enter a valid email to check account availability.';
+        accountLinkEmailStatus.textContent = 'Enter a valid email to continue.';
       }
       return;
     }
@@ -1181,10 +1135,6 @@ document.addEventListener('DOMContentLoaded', () => {
   accountLinkSelectAllBtn?.addEventListener('click', () => {
     const selected = getAccountLinkModalSelectedScopes();
     ACCOUNT_LINK_SCOPE_DEFINITIONS.forEach((definition) => {
-      if (definition.key === 'secretChat' && accountLinkTargetCapabilities?.chatEligible !== true) {
-        selected[definition.key] = false;
-        return;
-      }
       selected[definition.key] = true;
     });
     setAccountLinkModalScopeSelection(selected);

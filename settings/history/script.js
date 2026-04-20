@@ -116,6 +116,17 @@ document.addEventListener('DOMContentLoaded', () => {
       .filter(Boolean);
   }
 
+  function loadMergedList(key) {
+    const ownList = loadList(key);
+    return window.BilmLinkedData?.getMergedList?.(key, ownList, {
+      canonicalize: MEDIA_HISTORY_KEYS.has(key)
+        ? (item) => mediaIdentity.canonicalizeStoredItem(item) || item
+        : (item) => item,
+      dedupe: true,
+      limit: 120
+    }) || ownList;
+  }
+
   function saveList(key, list) {
     if (!MEDIA_HISTORY_KEYS.has(key)) {
       storage.setJSON(key, Array.isArray(list) ? list : []);
@@ -229,7 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function getFilteredItems() {
-    const list = loadList(getActiveKey());
+    const list = loadMergedList(getActiveKey());
     const cutoff = getRangeCutoff();
 
     let items = list.filter(item => getTimestamp(item) >= cutoff && matchesText(item));
@@ -279,7 +290,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateStats(visibleItems) {
-    const allItems = loadList(getActiveKey());
+    const allItems = loadMergedList(getActiveKey());
     visibleCount.textContent = String(visibleItems.length);
     totalCount.textContent = String(allItems.length);
 
@@ -298,8 +309,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const itemId = getItemId(item);
     const row = document.createElement('li');
     row.className = 'history-item';
+    const isLinkedShare = item.linkedShare === true;
+    if (isLinkedShare) row.classList.add('is-linked-share');
 
-    if (state.selectMode) row.classList.add('is-selectable');
+    if (state.selectMode && !isLinkedShare) row.classList.add('is-selectable');
     if (state.selectMode && state.selectedKeys.has(itemId)) row.classList.add('is-selected');
 
     const left = document.createElement('div');
@@ -345,12 +358,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (state.selectMode) {
       row.addEventListener('click', () => {
+        if (isLinkedShare) return;
         if (state.selectedKeys.has(itemId)) state.selectedKeys.delete(itemId);
         else state.selectedKeys.add(itemId);
         render();
       });
     } else {
-      row.appendChild(deleteBtn);
+      if (!isLinkedShare) row.appendChild(deleteBtn);
 
       if (state.activeType === 'search') {
         row.addEventListener('click', () => {
@@ -486,7 +500,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   selectAllBtn.addEventListener('click', () => {
-    const items = getVisibleItems(getFilteredItems());
+    const items = getVisibleItems(getFilteredItems()).filter(item => item.linkedShare !== true);
     const itemIds = items.map(getItemId);
     const allSelected = itemIds.length && itemIds.every(id => state.selectedKeys.has(id));
 
@@ -583,6 +597,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!listKeys.some((key) => HISTORY_SYNC_KEYS.has(String(key || '').trim()))) {
       return;
     }
+    resetSelection();
+    resetVisibleWindow();
+    render();
+  });
+  window.addEventListener('bilm:linked-share-updated', () => {
     resetSelection();
     resetVisibleWindow();
     render();

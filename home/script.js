@@ -152,6 +152,15 @@ document.addEventListener('DOMContentLoaded', () => {
     return list.map((item) => mediaIdentity.canonicalizeStoredItem(item) || item).filter(Boolean);
   }
 
+  function loadMergedList(key) {
+    const ownList = loadList(key);
+    if (!MEDIA_LIST_KEYS.has(key)) return ownList;
+    return window.BilmLinkedData?.getMergedList?.(key, ownList, {
+      canonicalize: (item) => mediaIdentity.canonicalizeStoredItem(item) || item,
+      limit: 120
+    }) || ownList;
+  }
+
   function saveList(key, items) {
     if (!MEDIA_LIST_KEYS.has(key)) {
       storage.setJSON(key, Array.isArray(items) ? items : []);
@@ -595,7 +604,7 @@ document.addEventListener('DOMContentLoaded', () => {
           type: item.type || identity.mediaType,
           tmdbId,
           id: cardId,
-          img: item.poster,
+          img: item.poster || item.img,
           source: item.source || (identity.provider === 'anilist' ? 'AniList' : 'TMDB'),
           rating: normalizeMediaRating(item),
           certification: item.certification,
@@ -627,26 +636,31 @@ document.addEventListener('DOMContentLoaded', () => {
         card.classList.add('is-selected');
       }
 
-      const actionBtn = document.createElement('button');
-      actionBtn.type = 'button';
-      actionBtn.className = 'card-action';
-      actionBtn.textContent = '✕';
-      actionBtn.setAttribute('aria-label', controls?.removeLabel || 'Remove');
-      actionBtn.addEventListener('click', (event) => {
-        event.stopPropagation();
-        const confirmRemove = confirm(controls?.confirmRemoveSingle || 'Remove this item?');
-        if (!confirmRemove) return;
-        const list = loadList(controls?.storageKey).filter(entry => entry.key !== item.key);
-        saveList(controls?.storageKey, list);
-        state.selected.delete(item.key);
-        updateEditUI(section);
-        renderSections();
-      });
+      if (item.linkedShare === true) {
+        card.classList.add('is-linked-share');
+      } else {
+        const actionBtn = document.createElement('button');
+        actionBtn.type = 'button';
+        actionBtn.className = 'card-action';
+        actionBtn.textContent = '✕';
+        actionBtn.setAttribute('aria-label', controls?.removeLabel || 'Remove');
+        actionBtn.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const confirmRemove = confirm(controls?.confirmRemoveSingle || 'Remove this item?');
+          if (!confirmRemove) return;
+          const list = loadList(controls?.storageKey).filter(entry => entry.key !== item.key);
+          saveList(controls?.storageKey, list);
+          state.selected.delete(item.key);
+          updateEditUI(section);
+          renderSections();
+        });
 
-      card.appendChild(actionBtn);
+        card.appendChild(actionBtn);
+      }
 
       card.onclick = () => {
         if (state.editing) {
+          if (item.linkedShare === true) return;
           if (state.selected.has(item.key)) {
             state.selected.delete(item.key);
           } else {
@@ -738,9 +752,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderSections() {
-    const continueItems = sortByRecent(loadList(CONTINUE_KEY));
-    const favoriteItems = sortByRecent(loadList(FAVORITES_KEY));
-    const watchLaterItems = sortByRecent(loadList(WATCH_LATER_KEY));
+    const continueItems = sortByRecent(loadMergedList(CONTINUE_KEY));
+    const favoriteItems = sortByRecent(loadMergedList(FAVORITES_KEY));
+    const watchLaterItems = sortByRecent(loadMergedList(WATCH_LATER_KEY));
 
     const continueFilteredItems = applyTypeFilter(continueItems, sectionState.continue.filter);
     const favoritesFilteredItems = applyTypeFilter(favoriteItems, sectionState.favorites.filter);
@@ -860,5 +874,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     renderSections();
   });
+  window.addEventListener('bilm:linked-share-updated', renderSections);
   window.addEventListener('storage', renderSections);
 });

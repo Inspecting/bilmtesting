@@ -14,6 +14,7 @@
   const MIGRATION_META_KEY = 'bilm-media-identity-migration-v3';
   const MIGRATION_QUARANTINE_KEY = 'bilm-media-identity-quarantine-v1';
   const MIGRATION_QUARANTINE_META_KEY = 'bilm-media-identity-quarantine-meta-v1';
+  const LINKED_SHARE_CACHE_KEY = 'bilm-linked-share-cache-v1';
   const MIGRATED_LIST_KEYS = Object.freeze([
     'bilm-favorites',
     'bilm-watch-later',
@@ -322,6 +323,111 @@
     }
   }
 
+  function getItemUpdatedAt(item) {
+    return Number(item?.updatedAt || item?.createdAtMs || item?.timestamp || item?.savedAt || item?.updatedAtMs || 0) || 0;
+  }
+
+  function normalizeLinkedShareCache() {
+    try {
+      const parsed = JSON.parse(global.localStorage?.getItem(LINKED_SHARE_CACHE_KEY) || 'null');
+      if (!parsed || parsed.schema !== 'bilm-linked-share-cache-v1') return { lists: {} };
+      return {
+        lists: parsed.lists && typeof parsed.lists === 'object' && !Array.isArray(parsed.lists)
+          ? parsed.lists
+          : {}
+      };
+    } catch {
+      return { lists: {} };
+    }
+  }
+
+  function readLinkedShareList(storageKey) {
+    const normalizedKey = String(storageKey || '').trim();
+    if (!normalizedKey) return [];
+    const cache = normalizeLinkedShareCache();
+    const bucket = cache.lists?.[normalizedKey];
+    if (!bucket || typeof bucket !== 'object' || Array.isArray(bucket)) return [];
+    return Object.values(bucket)
+      .map((record) => {
+        if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
+        const payload = record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+          ? record.payload
+          : null;
+        if (!payload) return null;
+        return {
+          ...payload,
+          linkedShare: true,
+          linkedShareItemKey: String(record.itemKey || '').trim(),
+          linkedShareSourceEmail: String(record.sourceEmail || payload.linkedShareSourceEmail || '').trim().toLowerCase() || null,
+          linkedShareUpdatedAtMs: Number(record.updatedAtMs || payload.updatedAt || 0) || 0
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function getMergedListKey(storageKey, item, index = 0) {
+    const linkedItemKey = String(item?.linkedShareItemKey || '').trim();
+    if (linkedItemKey) return linkedItemKey;
+    const normalizedStorageKey = String(storageKey || '').trim();
+    if (normalizedStorageKey === 'bilm-search-history') {
+      const query = String(item?.query || '').trim().toLowerCase();
+      return query ? `search:${query}` : `search-index:${index}`;
+    }
+    if (WATCH_HISTORY_MIGRATION_KEYS.has(normalizedStorageKey)) {
+      const historyEntryId = String(item?.historyEntryId || '').trim();
+      if (historyEntryId) return `history:${historyEntryId}`;
+      const identityKey = String(item?.key || getIdentityKey(item) || '').trim();
+      if (identityKey) return `history:${identityKey}:${getItemUpdatedAt(item)}`;
+      return `history-index:${index}`;
+    }
+    return String(item?.key || getIdentityKey(item) || '').trim() || `item-index:${index}`;
+  }
+
+  function mergeLinkedShareList(storageKey, localList = [], options = {}) {
+    const normalizedStorageKey = String(storageKey || '').trim();
+    const localItems = Array.isArray(localList) ? localList : [];
+    const linkedItems = readLinkedShareList(normalizedStorageKey);
+    if (!linkedItems.length) return localItems;
+
+    const canonicalize = typeof options.canonicalize === 'function'
+      ? options.canonicalize
+      : (item) => item;
+    const shouldDedupe = options.dedupe !== false;
+    const maxItems = Math.max(1, Number(options.limit || 120) || 120);
+    const map = new Map();
+
+    const addItem = (item, source, index) => {
+      const canonical = canonicalize(item) || item;
+      if (!canonical || typeof canonical !== 'object') return;
+      const key = shouldDedupe ? getMergedListKey(normalizedStorageKey, canonical, index) : `${source}:${index}`;
+      if (!key) return;
+      const current = map.get(key);
+      if (!current) {
+        map.set(key, canonical);
+        return;
+      }
+      const currentUpdatedAt = getItemUpdatedAt(current);
+      const nextUpdatedAt = getItemUpdatedAt(canonical);
+      const currentIsLocal = current.linkedShare !== true;
+      const nextIsLocal = canonical.linkedShare !== true;
+      if (nextIsLocal && !currentIsLocal) {
+        map.set(key, canonical);
+        return;
+      }
+      if (currentIsLocal && !nextIsLocal) return;
+      if (nextUpdatedAt >= currentUpdatedAt) {
+        map.set(key, canonical);
+      }
+    };
+
+    localItems.forEach((item, index) => addItem(item, 'local', index));
+    linkedItems.forEach((item, index) => addItem(item, 'linked', index));
+
+    return [...map.values()]
+      .sort((left, right) => getItemUpdatedAt(right) - getItemUpdatedAt(left))
+      .slice(0, maxItems);
+  }
+
   function writeJsonArray(storageKey, value) {
     global.localStorage?.setItem(storageKey, JSON.stringify(value));
   }
@@ -530,6 +636,13 @@
     normalizeInternalAppPath,
     normalizeSameOriginLink,
     withBase
+  };
+
+  global.BilmLinkedData = {
+    LINKED_SHARE_CACHE_KEY,
+    readLinkedShareList,
+    mergeLinkedShareList,
+    getMergedList: mergeLinkedShareList
   };
 
   try {

@@ -5,7 +5,11 @@ async function mockAuthScript(page, { loggedIn = false, email = 'tester@watchbil
   await page.route('**/shared/auth.js', async (route) => {
     const body = `
       (() => {
-        let currentUser = ${JSON.stringify(user)};
+        const makeUser = (input) => input ? ({
+          ...input,
+          getIdToken: async () => 'test-token'
+        }) : null;
+        let currentUser = makeUser(${JSON.stringify(user)});
         const authListeners = new Set();
         const notify = () => {
           authListeners.forEach((callback) => {
@@ -36,17 +40,42 @@ async function mockAuthScript(page, { loggedIn = false, email = 'tester@watchbil
           async flushSyncNow() { return true; },
           async signOut() { currentUser = null; notify(); },
           async signIn(nextEmail) {
-            currentUser = { uid: 'test-user-1', email: nextEmail || 'tester@watchbilm.org' };
+            currentUser = makeUser({ uid: 'test-user-1', email: nextEmail || 'tester@watchbilm.org' });
             notify();
             return { user: currentUser };
           },
           async signUp(nextEmail) {
-            currentUser = { uid: 'test-user-1', email: nextEmail || 'tester@watchbilm.org' };
+            currentUser = makeUser({ uid: 'test-user-1', email: nextEmail || 'tester@watchbilm.org' });
             notify();
             return { user: currentUser };
           },
           async getCloudSnapshot() { return null; },
           async saveCloudSnapshot() { return true; },
+          getAccountLinkScopeTemplate() {
+            return {
+              continueWatching: false,
+              favorites: false,
+              watchLater: false,
+              watchHistory: false,
+              searchHistory: false
+            };
+          },
+          normalizeAccountLinkShareScopes(scopes = {}) {
+            return {
+              continueWatching: scopes.continueWatching === true,
+              favorites: scopes.favorites === true,
+              watchLater: scopes.watchLater === true,
+              watchHistory: scopes.watchHistory === true,
+              searchHistory: scopes.searchHistory === true
+            };
+          },
+          async getAccountLinkState() {
+            return { ok: true, links: [], incomingRequests: [], pendingRequests: [], activeLink: null };
+          },
+          async createAccountLinkRequest() { return { ok: true }; },
+          async respondToAccountLinkRequest() { return { ok: true }; },
+          async updateAccountLinkScopes() { return { ok: true }; },
+          async unlinkAccountLink() { return { ok: true }; },
           withMutationSuppressed(task) {
             return typeof task === 'function' ? task() : undefined;
           }
@@ -79,6 +108,80 @@ async function setLocalJson(page, key, value) {
   await page.addInitScript(({ storageKey, payload }) => {
     localStorage.setItem(storageKey, JSON.stringify(payload));
   }, { storageKey: key, payload: value });
+}
+
+async function mockChatApi(page, { initialMessages = [] } = {}) {
+  const conversation = {
+    id: 'conv-test',
+    partnerEmail: 'partner@watchbilm.org',
+    lastMessagePreview: initialMessages.at(-1)?.text || 'No messages yet.',
+    lastMessageAtMs: Number(initialMessages.at(-1)?.createdAtMs || Date.now()),
+    updatedAtMs: Number(initialMessages.at(-1)?.createdAtMs || Date.now()),
+    unread: false
+  };
+  let messages = [...initialMessages];
+
+  await page.route('**/api/chat/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname.replace(/^\/api\/chat/, '') || '/';
+    const method = request.method().toUpperCase();
+
+    if (method === 'GET' && path === '/conversations') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, conversations: [conversation] })
+      });
+      return;
+    }
+
+    if (method === 'GET' && path === `/conversations/${conversation.id}/messages`) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          conversation,
+          messages: messages.slice(-20)
+        })
+      });
+      return;
+    }
+
+    if (method === 'POST' && path === `/conversations/${conversation.id}/messages`) {
+      const body = JSON.parse(request.postData() || '{}');
+      const message = {
+        id: `m-${messages.length + 1}`,
+        text: String(body.text || ''),
+        senderEmail: 'tester@watchbilm.org',
+        createdAtMs: Date.now()
+      };
+      messages = [...messages, message];
+      const trimmedMessageCount = Math.max(0, messages.length - 20);
+      messages = messages.slice(-20);
+      conversation.lastMessagePreview = message.text;
+      conversation.lastMessageAtMs = message.createdAtMs;
+      conversation.updatedAtMs = message.createdAtMs;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          conversation,
+          message,
+          trimmedMessageCount
+        })
+      });
+      return;
+    }
+
+    await route.fulfill({
+      status: 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: false, message: 'Not found' })
+    });
+  });
 }
 
 async function mockNativeFullscreenFailure(page) {
@@ -1204,6 +1307,64 @@ test('navbar removes games/chat controls and clears legacy chat storage keys', a
   expect(navbarState.hasScopedChatCursor).toBe(false);
 });
 
+test('chat keeps latest messages visible without composer overlap or forced bottom scroll', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 700 });
+  await mockAuthScript(page, { loggedIn: true, email: 'tester@watchbilm.org' });
+  const baseTime = Date.UTC(2026, 0, 1, 12, 0, 0);
+  const initialMessages = Array.from({ length: 20 }, (_, index) => ({
+    id: `m-${index + 1}`,
+    text: [
+      `Message ${index + 1}`,
+      'This line is intentionally long enough to create a scrollable mobile chat row.',
+      'Keeping several lines here makes the composer overlap test meaningful.',
+      'Older chat content should stay readable while new messages arrive.'
+    ].join('\n'),
+    senderEmail: index % 2 === 0 ? 'partner@watchbilm.org' : 'tester@watchbilm.org',
+    createdAtMs: baseTime + index * 1000
+  }));
+  await mockChatApi(page, { initialMessages });
+
+  await page.goto('/random/chat/', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#chatView')).toBeVisible();
+  await expect(page.locator('.message-row')).toHaveCount(20);
+
+  const layout = await page.evaluate(() => {
+    const listRect = document.getElementById('messageList')?.getBoundingClientRect();
+    const composerRect = document.getElementById('messageComposer')?.getBoundingClientRect();
+    return {
+      listBottom: listRect?.bottom || 0,
+      listHeight: listRect?.height || 0,
+      composerTop: composerRect?.top || 0,
+      composerHeight: composerRect?.height || 0
+    };
+  });
+  expect(layout.listHeight).toBeGreaterThan(120);
+  expect(layout.composerHeight).toBeGreaterThan(50);
+  expect(layout.listBottom).toBeLessThanOrEqual(layout.composerTop + 1);
+
+  const beforeSend = await page.locator('#messageList').evaluate((element) => {
+    element.scrollTop = 0;
+    return {
+      scrollTop: element.scrollTop,
+      distanceFromBottom: element.scrollHeight - element.scrollTop - element.clientHeight
+    };
+  });
+  expect(beforeSend.scrollTop).toBe(0);
+  expect(beforeSend.distanceFromBottom).toBeGreaterThan(72);
+
+  await page.fill('#messageInput', 'Newest from test');
+  await page.click('#sendMessageBtn');
+  await expect(page.locator('.message-row')).toHaveCount(20);
+  await expect(page.locator('.message-row').last()).toContainText('Newest from test');
+
+  const afterSend = await page.locator('#messageList').evaluate((element) => ({
+    scrollTop: element.scrollTop,
+    distanceFromBottom: element.scrollHeight - element.scrollTop - element.clientHeight
+  }));
+  expect(afterSend.scrollTop).toBeLessThanOrEqual(4);
+  expect(afterSend.distanceFromBottom).toBeGreaterThan(72);
+});
+
 test('games routes show removed page with home action', async ({ page }) => {
   await mockAuthScript(page, { loggedIn: false });
   await page.goto('/games/', { waitUntil: 'domcontentloaded' });
@@ -1312,6 +1473,79 @@ test('settings and account auth actions open shared navbar auth modal', async ({
     const modal = root?.getElementById('navbarAuthModal');
     return Boolean(modal && !modal.hidden);
   })).toBe(true);
+});
+
+test('account linking modal shows non-chat sharing scopes', async ({ page }) => {
+  await mockAuthScript(page, { loggedIn: true, email: 'tester@watchbilm.org' });
+  await page.goto('/settings/account/', { waitUntil: 'domcontentloaded' });
+
+  await page.click('#openAccountLinkModalBtn');
+  await expect(page.locator('#accountLinkModal.open')).toBeVisible();
+  await expect(page.locator('#accountLinkScopeOptions .scope-option')).toHaveCount(5);
+  await expect(page.locator('#accountLinkScopeOptions')).toContainText('Continue Watching');
+  await expect(page.locator('#accountLinkScopeOptions')).toContainText('Favorites');
+  await expect(page.locator('#accountLinkScopeOptions')).toContainText('Watch Later');
+  await expect(page.locator('#accountLinkScopeOptions')).toContainText('Watch History');
+  await expect(page.locator('#accountLinkScopeOptions')).toContainText('Search History');
+  await expect(page.locator('#accountLinkScopeOptions')).not.toContainText('Secret Chat');
+
+  await page.click('#accountLinkSelectAllBtn');
+  const checkedScopes = await page.locator('#accountLinkScopeOptions input[type="checkbox"]:checked').count();
+  expect(checkedScopes).toBe(5);
+});
+
+test('linked share cache merges into home lists without exporting partner data', async ({ page }) => {
+  await mockAuthScript(page, { loggedIn: true, email: 'tester@watchbilm.org' });
+  await setLocalJson(page, 'bilm-favorites', [
+    {
+      provider: 'tmdb',
+      type: 'movie',
+      key: 'tmdb:movie:10',
+      id: 10,
+      tmdbId: 10,
+      title: 'Own Favorite',
+      poster: 'https://via.placeholder.com/140x210?text=Own',
+      link: '/movies/show.html?id=10',
+      updatedAt: 1726000000000
+    }
+  ]);
+  await setLocalJson(page, 'bilm-linked-share-cache-v1', {
+    schema: 'bilm-linked-share-cache-v1',
+    version: 1,
+    updatedAtMs: 1726000001000,
+    linkSignature: 'link-test:favorites',
+    lists: {
+      'bilm-favorites': {
+        'tmdb:movie:11': {
+          itemKey: 'tmdb:movie:11',
+          sourceEmail: 'partner@example.com',
+          updatedAtMs: 1726000001000,
+          payload: {
+            provider: 'tmdb',
+            type: 'movie',
+            key: 'tmdb:movie:11',
+            id: 11,
+            tmdbId: 11,
+            title: 'Partner Favorite',
+            poster: 'https://via.placeholder.com/140x210?text=Partner',
+            link: '/movies/show.html?id=11',
+            updatedAt: 1726000001000
+          }
+        }
+      }
+    }
+  });
+
+  await page.goto('/home/', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#favoriteItems')).toContainText('Own Favorite');
+  await expect(page.locator('#favoriteItems')).toContainText('Partner Favorite');
+
+  await page.goto('/settings/account/', { waitUntil: 'domcontentloaded' });
+  await page.click('#exportDataBtn');
+  const exported = await page.locator('#dataCodeField').inputValue();
+  expect(exported).toContain('Own Favorite');
+  expect(exported).not.toContain('Partner Favorite');
+  expect(exported).not.toContain('bilm-linked-share-cache-v1');
 });
 
 test('watch history keeps duplicate rows and delete removes only one entry', async ({ page }) => {

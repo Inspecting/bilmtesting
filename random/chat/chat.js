@@ -20,8 +20,7 @@
     filterText: '',
     pollingTimer: null,
     loadingConversations: false,
-    sendingMessage: false,
-    chatReadyMarked: false
+    sendingMessage: false
   };
 
   const elements = {};
@@ -102,19 +101,6 @@
       ? Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)
       : 0;
     document.documentElement.style.setProperty('--chat-keyboard-inset', `${Math.round(inset)}px`);
-  }
-
-  async function markChatReadyIfPossible({ force = false } = {}) {
-    if (!state.currentUser || !state.authApi?.markAccountChatReady) return false;
-    if (!force && state.chatReadyMarked) return true;
-    try {
-      await state.authApi.markAccountChatReady();
-      state.chatReadyMarked = true;
-      return true;
-    } catch (error) {
-      console.warn('Mark chat-ready skipped:', error);
-      return false;
-    }
   }
 
   function setConversations(conversations) {
@@ -757,7 +743,6 @@
     }
     state.conversationsById.set(conversation.id, conversation);
     setActiveConversation(conversation.id);
-    void markChatReadyIfPossible();
     return conversation;
   }
 
@@ -840,7 +825,6 @@
       if (Number(payload?.trimmedMessageCount || 0) > 0) {
         void fetchMessages(conversation.id, { quiet: true, scrollMode: 'auto' });
       }
-      void markChatReadyIfPossible();
     } catch (error) {
       if (isAuthError(error)) {
         setComposerStatus('Create an account or log in to send messages.', 'error');
@@ -954,7 +938,6 @@
     state.currentUser = user || null;
     setLoginStatus(state.currentUser);
     if (!state.currentUser) {
-      state.chatReadyMarked = false;
       clearMessageSelection();
       stopPolling();
       setComposerStatus('Log in to start chatting.', 'muted');
@@ -964,7 +947,6 @@
     closeAuthPromptModal();
     startPolling();
     setComposerStatus('', 'muted');
-    void markChatReadyIfPossible({ force: true });
     void loadConversations({ quiet: true });
   }
 
@@ -978,7 +960,6 @@
       });
       if (state.currentUser) {
         startPolling();
-        await markChatReadyIfPossible({ force: true });
       }
       await loadConversations({ quiet: true });
     } catch (error) {

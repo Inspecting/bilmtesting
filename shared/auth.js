@@ -23,7 +23,6 @@
   const ACCOUNT_LINK_RESPOND_PATH = '/links/respond';
   const ACCOUNT_LINK_SCOPES_PATH = '/links/scopes';
   const ACCOUNT_LINK_UNLINK_PATH = '/links/unlink';
-  const ACCOUNT_LINK_CHAT_READY_PATH = '/links/chat-ready';
   const ACCOUNT_LINK_SHARED_FEED_PATH = '/links/shared-feed';
   const TRANSFER_API_DISABLE_KEY = 'bilm-transfer-api-disabled';
 
@@ -446,13 +445,6 @@
     });
   }
 
-  async function markAccountChatReadyInTransferApi(user, userId) {
-    return await callAccountLinkApi(user, ACCOUNT_LINK_CHAT_READY_PATH, {
-      method: 'POST',
-      body: { userId }
-    });
-  }
-
   async function pullLinkedSharedFeedFromTransferApi(user, userId, {
     sinceMs = 0,
     limit = 250
@@ -517,6 +509,7 @@
   const LINKED_SHARE_CURSOR_META_KEY = 'linkedShareCursorMs';
   const LINKED_SHARE_LAST_PULL_META_KEY = 'lastLinkedSharePullAtMs';
   const LINKED_SHARE_LINK_SIGNATURE_META_KEY = 'linkedShareLinkSignature';
+  const LINKED_SHARE_CACHE_KEY = 'bilm-linked-share-cache-v1';
   const SYNC_FUTURE_TIME_WINDOW_MS = 10 * 60 * 1000;
   const SYNC_PENDING_DIAGNOSTIC_LIMIT = 20;
   const SYNC_MAX_ITEM_KEY_LENGTH = 255;
@@ -559,6 +552,7 @@
     'bilm-global-message-dismissed-migrating-data'
   ]);
   const LOCAL_ONLY_SYNC_EXCLUDED_KEYS = new Set([
+    LINKED_SHARE_CACHE_KEY,
     INCOGNITO_BACKUP_KEY,
     INCOGNITO_SEARCH_MAP_KEY,
     DEBUG_ISSUE_LOCAL_KEY
@@ -619,9 +613,9 @@
   const ACCOUNT_LINK_SHARE_SCOPE_KEYS = Object.freeze([
     'continueWatching',
     'favorites',
+    'watchLater',
     'watchHistory',
-    'searchHistory',
-    'secretChat'
+    'searchHistory'
   ]);
   let lastAppliedCloudSignature = '';
   const pendingListOperations = new Map();
@@ -1047,7 +1041,6 @@
     const pendingRequests = Array.isArray(source.pendingRequests) ? source.pendingRequests : [];
     return {
       ok: source.ok !== false,
-      chatReady: source.chatReady === true,
       links,
       incomingRequests,
       pendingRequests,
@@ -1063,7 +1056,6 @@
       ok: source.ok !== false,
       targetEmail: String(source.targetEmail || normalizedEmail || '').trim().toLowerCase(),
       accountFound: source.accountFound === true,
-      chatEligible: source.chatEligible === true,
       requesterBlocked: source.requesterBlocked === true,
       targetBlocked: source.targetBlocked === true
     };
@@ -2049,6 +2041,7 @@
 
     delete localState[INCOGNITO_BACKUP_KEY];
     delete sessionState[INCOGNITO_BACKUP_KEY];
+    delete localState[LINKED_SHARE_CACHE_KEY];
     delete localState[INCOGNITO_SEARCH_MAP_KEY];
     delete sessionState[INCOGNITO_SEARCH_MAP_KEY];
     delete localState[DEBUG_ISSUE_LOCAL_KEY];
@@ -2603,6 +2596,9 @@
       if (!normalized) return;
       const listOperation = toListOperation(normalized);
       if (listOperation) {
+        listOperation.linkId = operation?.linkId || null;
+        listOperation.sourceUserId = operation?.sourceUserId || null;
+        listOperation.sourceEmail = operation?.sourceEmail || null;
         listOperations.push(listOperation);
         return;
       }
@@ -2613,16 +2609,160 @@
     return { listOperations, sectorOperations };
   }
 
-  function applyLinkedShareOperationsToLocalStorage(operations = []) {
+  function readLinkedShareCache() {
+    try {
+      const parsed = safeParse(localStorage.getItem(LINKED_SHARE_CACHE_KEY), null);
+      if (!parsed || parsed.schema !== 'bilm-linked-share-cache-v1') {
+        return {
+          schema: 'bilm-linked-share-cache-v1',
+          version: 1,
+          updatedAtMs: 0,
+          lists: {}
+        };
+      }
+      return {
+        schema: 'bilm-linked-share-cache-v1',
+        version: 1,
+        updatedAtMs: Number(parsed.updatedAtMs || 0) || 0,
+        linkSignature: String(parsed.linkSignature || '').trim(),
+        lists: parsed.lists && typeof parsed.lists === 'object' && !Array.isArray(parsed.lists)
+          ? parsed.lists
+          : {}
+      };
+    } catch {
+      return {
+        schema: 'bilm-linked-share-cache-v1',
+        version: 1,
+        updatedAtMs: 0,
+        lists: {}
+      };
+    }
+  }
+
+  function writeLinkedShareCache(cache, { listKeys = [] } = {}) {
+    const safeCache = cache && typeof cache === 'object' && !Array.isArray(cache)
+      ? cache
+      : {};
+    const payload = {
+      schema: 'bilm-linked-share-cache-v1',
+      version: 1,
+      updatedAtMs: Date.now(),
+      linkSignature: String(safeCache.linkSignature || '').trim(),
+      lists: safeCache.lists && typeof safeCache.lists === 'object' && !Array.isArray(safeCache.lists)
+        ? safeCache.lists
+        : {}
+    };
+
+    withMutationSuppressed(() => {
+      localStorage.setItem(LINKED_SHARE_CACHE_KEY, JSON.stringify(payload));
+    });
+
+    const changedListKeys = [...new Set(
+      (Array.isArray(listKeys) ? listKeys : [])
+        .map((key) => String(key || '').trim())
+        .filter(Boolean)
+    )];
+    if (changedListKeys.length) {
+      emitListSyncApplied({
+        listKeys: changedListKeys,
+        atMs: payload.updatedAtMs,
+        linkedShare: true
+      });
+      emitSyncAppliedEvent({
+        source: 'linked-share-cache',
+        atMs: payload.updatedAtMs,
+        listKeys: changedListKeys
+      });
+    }
+
+    try {
+      window.dispatchEvent(new CustomEvent('bilm:linked-share-updated', {
+        detail: {
+          atMs: payload.updatedAtMs,
+          listKeys: changedListKeys
+        }
+      }));
+    } catch (error) {
+      console.warn('Linked-share update event failed:', error);
+    }
+  }
+
+  function clearLinkedShareCache({ listKeys = [...MERGEABLE_LIST_KEYS] } = {}) {
+    withMutationSuppressed(() => {
+      localStorage.removeItem(LINKED_SHARE_CACHE_KEY);
+    });
+    emitSyncAppliedEvent({
+      source: 'linked-share-cache-clear',
+      atMs: Date.now(),
+      listKeys
+    });
+  }
+
+  function applyLinkedShareOperationsToLocalStorage(operations = [], options = {}) {
     if (!Array.isArray(operations) || operations.length === 0) return false;
-    const { listOperations, sectorOperations } = splitLinkedShareOperations(operations);
-    const listApplied = listOperations.length > 0
-      ? applyListOperationsToLocalStorage(listOperations)
-      : false;
-    const sectorApplied = sectorOperations.length > 0
-      ? applyStorageSectorOperationsToLocalStorage(sectorOperations)
-      : false;
-    return listApplied || sectorApplied;
+    const { listOperations } = splitLinkedShareOperations(operations);
+    if (!listOperations.length) return false;
+
+    const existingCache = readLinkedShareCache();
+    const cache = {
+      ...existingCache,
+      linkSignature: String(options?.linkSignature || existingCache.linkSignature || '').trim()
+    };
+    const lists = cache.lists && typeof cache.lists === 'object' && !Array.isArray(cache.lists)
+      ? { ...cache.lists }
+      : {};
+    const changedListKeys = new Set();
+
+    listOperations.forEach((operation) => {
+      const listKey = String(operation?.listKey || '').trim();
+      const itemKey = String(operation?.itemKey || '').trim();
+      if (!MERGEABLE_LIST_KEYS.has(listKey) || !itemKey) return;
+      const currentMap = lists[listKey] && typeof lists[listKey] === 'object' && !Array.isArray(lists[listKey])
+        ? { ...lists[listKey] }
+        : {};
+      const updatedAtMs = normalizeOperationUpdatedAt(operation?.updatedAtMs, 0, { context: 'linked-share-cache' });
+
+      if (operation.deleted === true) {
+        if (currentMap[itemKey]) {
+          delete currentMap[itemKey];
+          changedListKeys.add(listKey);
+        }
+        lists[listKey] = currentMap;
+        return;
+      }
+
+      const payload = normalizeListOperationPayload(operation?.payload, updatedAtMs);
+      if (!payload) return;
+      const existing = currentMap[itemKey];
+      const existingUpdatedAtMs = normalizeOperationUpdatedAt(existing?.updatedAtMs, 0, { context: 'linked-share-existing' });
+      if (existing && existingUpdatedAtMs > updatedAtMs) return;
+
+      currentMap[itemKey] = {
+        itemKey,
+        listKey,
+        sectorKey: listKeyToSectorKey(listKey),
+        linkId: String(operation?.linkId || '').trim() || null,
+        sourceUserId: String(operation?.sourceUserId || '').trim() || null,
+        sourceEmail: String(operation?.sourceEmail || '').trim().toLowerCase() || null,
+        updatedAtMs,
+        payload: {
+          ...payload,
+          linkedShare: true,
+          linkedShareSourceEmail: String(operation?.sourceEmail || '').trim().toLowerCase() || null
+        }
+      };
+      lists[listKey] = currentMap;
+      changedListKeys.add(listKey);
+    });
+
+    if (!changedListKeys.size) return false;
+    writeLinkedShareCache({
+      ...cache,
+      lists
+    }, {
+      listKeys: [...changedListKeys]
+    });
+    return true;
   }
 
   async function syncLinkedSharedFeedNow(user, userId) {
@@ -2643,10 +2783,12 @@
       const activeLinkIds = Array.isArray(response?.activeLinkIds)
         ? [...new Set(response.activeLinkIds.map((value) => String(value || '').trim()).filter(Boolean))].sort()
         : [];
-      const nextLinkSignature = activeLinkIds.join('|');
+      const responseLinkSignature = String(response?.linkSignature || '').trim();
+      const nextLinkSignature = responseLinkSignature || activeLinkIds.join('|');
       if (nextLinkSignature !== linkSignature) {
         setLinkedShareLinkSignature(nextLinkSignature, user);
         linkSignature = nextLinkSignature;
+        clearLinkedShareCache();
         if (!restartedForLinkChange && sinceMs > 0) {
           restartedForLinkChange = true;
           sinceMs = 0;
@@ -2657,7 +2799,9 @@
 
       const operations = response.operations;
       if (operations.length > 0) {
-        const didApply = applyLinkedShareOperationsToLocalStorage(operations);
+        const didApply = applyLinkedShareOperationsToLocalStorage(operations, {
+          linkSignature
+        });
         applied = applied || didApply;
       }
 
@@ -4194,19 +4338,8 @@
       const payload = await unlinkAccountLinkInTransferApi(user, userId, { linkId: normalizedLinkId });
       resetLinkedShareCursor(user);
       setLinkedShareLinkSignature('', user);
+      clearLinkedShareCache();
       return payload && typeof payload === 'object' ? payload : { ok: true };
-    },
-    async markAccountChatReady() {
-      await init();
-      const user = auth?.currentUser;
-      if (!user) {
-        return { ok: false, skipped: true, reason: 'missing_session' };
-      }
-      const userId = getTransferUserId(user);
-      const payload = await markAccountChatReadyInTransferApi(user, userId);
-      return payload && typeof payload === 'object'
-        ? payload
-        : { ok: true, userId, chatReady: true };
     },
     getFirebaseBackupStatus() {
       return getFirebaseBackupStatus();

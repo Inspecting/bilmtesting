@@ -25,6 +25,8 @@ body {
 .chat-page {
   width: min(1260px, 96vw);
   margin: 90px auto calc(26px + var(--chat-safe-bottom));
+  height: clamp(560px, calc(100dvh - 116px - var(--chat-safe-bottom)), 820px);
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
   gap: 14px;
@@ -44,7 +46,8 @@ body {
   padding: 14px;
   display: grid;
   gap: 12px;
-  min-height: 72vh;
+  min-height: 0;
+  height: 100%;
   grid-template-rows: auto auto auto minmax(0, 1fr);
 }
 
@@ -241,7 +244,8 @@ body {
 }
 
 .chat-main {
-  min-height: 72vh;
+  min-height: 0;
+  height: 100%;
   padding: 14px;
   display: grid;
   gap: 0;
@@ -523,13 +527,17 @@ body {
 @media (max-width: 980px) {
   .chat-page {
     grid-template-columns: 1fr;
+    height: auto;
     margin-top: 78px;
     margin-bottom: calc(24px + var(--chat-safe-bottom));
     width: min(980px, 96vw);
+    align-items: start;
   }
 
   .chat-sidebar {
+    height: auto;
     min-height: 220px;
+    max-height: 360px;
     grid-template-rows: auto auto auto auto;
   }
 
@@ -538,14 +546,15 @@ body {
   }
 
   .chat-main {
-    min-height: 62vh;
+    height: min(680px, calc(100dvh - 118px - var(--chat-safe-bottom)));
+    min-height: 420px;
   }
 }
 
 @media (max-width: 768px) {
   .chat-page {
     margin: 16px auto calc(var(--chat-mobile-bottom-offset) + 12px);
-    min-height: calc(100dvh - 16px - var(--chat-mobile-bottom-offset));
+    min-height: 0;
   }
 
   .chat-main,
@@ -554,7 +563,8 @@ body {
   }
 
   .chat-main {
-    min-height: calc(100dvh - 170px - var(--chat-mobile-bottom-offset));
+    height: max(360px, calc(100dvh - var(--chat-mobile-bottom-offset) - 32px));
+    min-height: 0;
     padding-bottom: calc(10px + var(--chat-safe-bottom));
   }
 
