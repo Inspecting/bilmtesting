@@ -76,6 +76,43 @@
       font-size: 1rem;
     }
 
+    .settings-hub {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 0 0 22px;
+    }
+
+    .settings-hub-link {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+      color: var(--text-primary);
+      text-decoration: none;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .settings-hub-link:hover,
+    .settings-hub-link:focus-visible {
+      border-color: color-mix(in srgb, var(--accent) 60%, var(--border));
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 70%, transparent);
+      outline: none;
+    }
+
+    .settings-hub-link strong {
+      font-size: 0.98rem;
+    }
+
+    .settings-hub-link span {
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }
+
     .settings-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -152,11 +189,18 @@
       border-radius: var(--radius-sm);
       padding: 8px 10px;
       font-family: inherit;
+      min-width: 0;
     }
 
     select:focus,
-    input[type="color"]:focus {
-      outline: none;
+    input[type="color"]:focus,
+    input[type="email"]:focus,
+    input[type="password"]:focus,
+    button:focus-visible,
+    a:focus-visible,
+    textarea:focus-visible {
+      outline: 2px solid color-mix(in srgb, var(--accent) 70%, #ffffff 15%);
+      outline-offset: 2px;
       border-color: var(--accent);
       box-shadow: 0 0 10px var(--accent-soft);
     }
@@ -394,9 +438,11 @@
       display: none;
       align-items: center;
       justify-content: center;
-      padding: 20px;
+      padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
       background: rgba(5, 5, 15, 0.75);
       backdrop-filter: blur(8px);
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
 
     .data-modal.open {
@@ -404,7 +450,9 @@
     }
 
     .data-modal__panel {
-      width: min(860px, 100%);
+      width: min(860px, calc(100vw - 24px));
+      max-height: calc(100svh - 24px);
+      overflow: auto;
       background: var(--surface-1);
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);
@@ -443,8 +491,23 @@
         padding: 20px 16px 80px;
       }
 
+      .settings-hub {
+        grid-template-columns: 1fr;
+      }
+
       .control-row {
         align-items: flex-start;
+      }
+
+      .actions-row {
+        width: 100%;
+      }
+
+      .actions-row .btn,
+      .actions-row a,
+      .actions-row button {
+        width: 100%;
+        text-align: center;
       }
     }
   </style>
@@ -461,8 +524,23 @@
   <div class="settings-content">
   <div class="page-header">
     <h1>Settings</h1>
-    <p>Personalize the Bilm experience with your preferred theme, motion, and playback defaults.</p>
+    <p>Personalize Bilm, manage your account, and keep backup/sync tools easy to find.</p>
   </div>
+
+  <nav class="settings-hub" aria-label="Settings shortcuts">
+    <a class="settings-hub-link" href="../settings/account/">
+      <strong>Account & Backup</strong>
+      <span>Sign in, cloud export/import, account linking, profile, and safety controls.</span>
+    </a>
+    <a class="settings-hub-link" href="../settings/history/">
+      <strong>History & Privacy</strong>
+      <span>Review or clear watch history, search history, and local privacy data.</span>
+    </a>
+    <a class="settings-hub-link" href="../settings/maintenance/">
+      <strong>Maintenance</strong>
+      <span>Health checks, recovery tools, cache cleanup, and deeper diagnostics.</span>
+    </a>
+  </nav>
 
   <div class="settings-grid">
     <section class="settings-card">
@@ -679,8 +757,8 @@
     <p>Use your email and password to log in.</p>
     <form id="loginForm" autocomplete="on">
       <div class="backup-tools">
-        <input id="loginEmail" name="email" type="email" placeholder="Email" autocomplete="email" />
-        <input id="loginPassword" name="password" type="password" placeholder="Password" autocomplete="current-password" />
+        <input id="loginEmail" name="email" type="email" placeholder="Email..." aria-label="Email" autocomplete="email" spellcheck="false" />
+        <input id="loginPassword" name="password" type="password" placeholder="Password..." aria-label="Password" autocomplete="current-password" />
         <button class="btn btn-outline" id="toggleLoginPasswordBtn" type="button">Show Password</button>
         <span class="backup-status" id="loginStatus" aria-live="polite"></span>
         <small id="loginHelperText">Don&apos;t have an account? Use Create an Account.</small>
@@ -700,8 +778,8 @@
     <p>Create an account with your email and password.</p>
     <form id="signUpForm" autocomplete="on">
       <div class="backup-tools">
-        <input id="signUpEmail" name="email" type="email" placeholder="Email" autocomplete="email" />
-        <input id="signUpPassword" name="password" type="password" placeholder="Password" autocomplete="new-password" />
+        <input id="signUpEmail" name="email" type="email" placeholder="Email..." aria-label="Email" autocomplete="email" spellcheck="false" />
+        <input id="signUpPassword" name="password" type="password" placeholder="Password..." aria-label="Password" autocomplete="new-password" />
         <button class="btn btn-outline" id="toggleSignUpPasswordBtn" type="button">Show Password</button>
         <span class="backup-status" id="signUpStatus" aria-live="polite"></span>
       </div>

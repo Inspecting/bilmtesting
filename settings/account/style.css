@@ -11,6 +11,14 @@ body { display: flex; flex-direction: column; }
 
 main { flex: 1; width: 100%; padding: 16px 20px 80px; }
 
+input,
+button,
+select,
+textarea {
+  font: inherit;
+  min-width: 0;
+}
+
 .account-shell {
   width: min(100%, 1000px);
   margin: 0 auto;
@@ -68,6 +76,13 @@ input {
   color: var(--text-primary);
 }
 
+input:focus-visible,
+textarea:focus-visible,
+button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, #ffffff 15%);
+  outline-offset: 2px;
+}
+
 .btn {
   padding: 10px 16px;
   border-radius: var(--radius-sm);
@@ -105,6 +120,38 @@ input {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.actions .btn {
+  min-width: 0;
+}
+
+.account-quick-nav {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quick-nav-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  text-decoration: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.quick-nav-link:hover,
+.quick-nav-link:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 70%, transparent);
 }
 
 .account-link-card {
@@ -174,16 +221,18 @@ input {
   display: none;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   background: rgba(5, 5, 15, 0.75);
   backdrop-filter: blur(8px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .data-modal.open { display: flex; }
 
 .data-modal__panel {
-  width: min(860px, 100%);
-  max-height: min(92vh, 720px);
+  width: min(860px, calc(100vw - 24px));
+  max-height: calc(100svh - 24px);
   overflow: auto;
   background: var(--surface-1);
   border: 1px solid var(--border);
@@ -308,8 +357,37 @@ input {
     flex-direction: column;
   }
 
+  .actions .btn,
+  .modal-actions .btn {
+    width: 100%;
+  }
+
+  .account-quick-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .scope-columns {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 420px) {
+  main {
+    padding-inline: 10px;
+  }
+
+  .account-shell {
+    padding: 12px;
+    border-radius: var(--radius-md);
+  }
+
+  .account-quick-nav {
+    grid-template-columns: 1fr;
+  }
+
+  .data-modal__panel {
+    width: min(100%, calc(100vw - 20px));
+    padding: 14px;
   }
 }
 

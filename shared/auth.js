@@ -83,7 +83,12 @@
     }
     const body = JSON.stringify({
       userId,
-      data: normalizedSnapshot
+      data: {
+        snapshot: {
+          value: normalizedSnapshot
+        }
+      },
+      snapshot: normalizedSnapshot
     });
     const headers = {
       'content-type': 'application/json',

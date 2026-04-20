@@ -1458,14 +1458,34 @@ test('settings and account auth actions open shared navbar auth modal', async ({
     return Boolean(root?.getElementById('navbarAuthPasswordToggleBtn'));
   })).toBe(true);
 
-  const panelWidth = await page.evaluate(() => {
+  const authLayout = await page.evaluate(() => {
     const root = document.querySelector('#navbarContainer')?.shadowRoot;
     const panel = root?.querySelector('.navbar-auth-panel');
-    return panel ? Number.parseFloat(getComputedStyle(panel).width) : 0;
+    const password = root?.getElementById('navbarAuthPassword');
+    if (!panel || !password) return null;
+    const panelRect = panel.getBoundingClientRect();
+    const passwordRect = password.getBoundingClientRect();
+    return {
+      viewportWidth: window.innerWidth,
+      panelLeft: panelRect.left,
+      panelRight: panelRect.right,
+      passwordLeft: passwordRect.left,
+      passwordRight: passwordRect.right
+    };
   });
-  expect(panelWidth).toBeGreaterThan(360);
+  expect(authLayout).toBeTruthy();
+  expect(authLayout.panelLeft).toBeGreaterThanOrEqual(0);
+  expect(authLayout.panelRight).toBeLessThanOrEqual(authLayout.viewportWidth);
+  expect(authLayout.passwordLeft).toBeGreaterThanOrEqual(authLayout.panelLeft);
+  expect(authLayout.passwordRight).toBeLessThanOrEqual(authLayout.panelRight);
+
+  await expect(page.locator('.settings-hub')).toBeVisible();
+  await expect(page.locator('.settings-hub')).toContainText('Account & Backup');
+  await expect(page.locator('.settings-hub')).toContainText('History & Privacy');
+  await expect(page.locator('.settings-hub')).toContainText('Maintenance');
 
   await page.goto('/settings/account/', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('.account-quick-nav')).toBeVisible();
   await page.click('#openLoginModalBtn');
 
   await expect.poll(async () => page.evaluate(() => {
