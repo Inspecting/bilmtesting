@@ -474,14 +474,30 @@
 
   async function pullLinkedSharedFeedFromTransferApi(user, userId, {
     sinceMs = 0,
+    cursorUpdatedAtMs = 0,
+    cursorOpId = '',
+    cursorSectorKey = '',
+    cursorItemKey = '',
     limit = 250
   } = {}) {
+    const normalizedCursorUpdatedAtMs = Math.max(0, Number(cursorUpdatedAtMs || 0) || 0);
+    const normalizedCursorOpId = String(cursorOpId || '').trim().slice(0, 120);
+    const normalizedCursorSectorKey = String(cursorSectorKey || '').trim().toLowerCase();
+    const normalizedCursorItemKey = String(cursorItemKey || '').trim();
+    const includeCursor = normalizedCursorUpdatedAtMs > 0
+      || Boolean(normalizedCursorOpId)
+      || Boolean(normalizedCursorSectorKey)
+      || Boolean(normalizedCursorItemKey);
     return await callAccountLinkApi(user, ACCOUNT_LINK_SHARED_FEED_PATH, {
       method: 'GET',
       query: {
         userId,
         since: String(Math.max(0, Number(sinceMs || 0) || 0)),
-        limit: String(Math.max(1, Math.min(500, Number(limit || 250) || 250)))
+        limit: String(Math.max(1, Math.min(500, Number(limit || 250) || 250))),
+        cursorUpdatedAtMs: includeCursor ? String(normalizedCursorUpdatedAtMs) : null,
+        cursorOpId: includeCursor ? normalizedCursorOpId : null,
+        cursorSectorKey: includeCursor ? normalizedCursorSectorKey : null,
+        cursorItemKey: includeCursor ? normalizedCursorItemKey : null
       }
     });
   }
@@ -595,6 +611,9 @@
   const SYNC_TIMESTAMP_CLAMP_WARNING_META_KEY = 'timestampClampWarningAtMs';
   const SYNC_TIMESTAMP_SKEW_DETECTED_META_KEY = 'timestampSkewDetectedAtMs';
   const LINKED_SHARE_CURSOR_META_KEY = 'linkedShareCursorMs';
+  const LINKED_SHARE_CURSOR_OPID_META_KEY = 'linkedShareCursorOpId';
+  const LINKED_SHARE_CURSOR_SECTOR_META_KEY = 'linkedShareCursorSectorKey';
+  const LINKED_SHARE_CURSOR_ITEM_META_KEY = 'linkedShareCursorItemKey';
   const LINKED_SHARE_LAST_PULL_META_KEY = 'lastLinkedSharePullAtMs';
   const LINKED_SHARE_LINK_SIGNATURE_META_KEY = 'linkedShareLinkSignature';
   const LINKED_SHARE_CACHE_KEY = 'bilm-linked-share-cache-v1';
@@ -1364,6 +1383,39 @@
     return setScopedSyncMetaNumber(LINKED_SHARE_CURSOR_META_KEY, nextCursorMs);
   }
 
+  function normalizeLinkedShareCursorOpId(value) {
+    return String(value || '').trim().slice(0, 120);
+  }
+
+  function normalizeLinkedShareCursorSectorKey(value) {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  function normalizeLinkedShareCursorItemKey(value) {
+    return String(value || '').trim();
+  }
+
+  function getLinkedShareCursorTuple(user = auth?.currentUser || currentUser) {
+    return {
+      updatedAtMs: getLinkedShareCursorMs(),
+      opId: normalizeLinkedShareCursorOpId(getScopedSyncMetaValue(LINKED_SHARE_CURSOR_OPID_META_KEY, '', user)),
+      sectorKey: normalizeLinkedShareCursorSectorKey(getScopedSyncMetaValue(LINKED_SHARE_CURSOR_SECTOR_META_KEY, '', user)),
+      itemKey: normalizeLinkedShareCursorItemKey(getScopedSyncMetaValue(LINKED_SHARE_CURSOR_ITEM_META_KEY, '', user))
+    };
+  }
+
+  function setLinkedShareCursorTuple({
+    updatedAtMs = 0,
+    opId = '',
+    sectorKey = '',
+    itemKey = ''
+  } = {}, user = auth?.currentUser || currentUser) {
+    setScopedSyncMetaValue(LINKED_SHARE_CURSOR_META_KEY, Math.max(0, Number(updatedAtMs || 0) || 0), user);
+    setScopedSyncMetaValue(LINKED_SHARE_CURSOR_OPID_META_KEY, normalizeLinkedShareCursorOpId(opId), user);
+    setScopedSyncMetaValue(LINKED_SHARE_CURSOR_SECTOR_META_KEY, normalizeLinkedShareCursorSectorKey(sectorKey), user);
+    setScopedSyncMetaValue(LINKED_SHARE_CURSOR_ITEM_META_KEY, normalizeLinkedShareCursorItemKey(itemKey), user);
+  }
+
   function getLinkedShareLinkSignature(user = auth?.currentUser || currentUser) {
     return String(getScopedSyncMetaValue(LINKED_SHARE_LINK_SIGNATURE_META_KEY, '', user) || '').trim();
   }
@@ -1374,6 +1426,9 @@
 
   function resetLinkedShareCursor(user = auth?.currentUser || currentUser) {
     setScopedSyncMetaValue(LINKED_SHARE_CURSOR_META_KEY, 0, user);
+    setScopedSyncMetaValue(LINKED_SHARE_CURSOR_OPID_META_KEY, '', user);
+    setScopedSyncMetaValue(LINKED_SHARE_CURSOR_SECTOR_META_KEY, '', user);
+    setScopedSyncMetaValue(LINKED_SHARE_CURSOR_ITEM_META_KEY, '', user);
     return 0;
   }
 
@@ -2921,18 +2976,78 @@
     return true;
   }
 
-  async function syncLinkedSharedFeedNow(user, userId) {
-    let sinceMs = getLinkedShareCursorMs();
+  function createEmptyLinkedShareCursorTuple() {
+    return {
+      updatedAtMs: 0,
+      opId: '',
+      sectorKey: '',
+      itemKey: ''
+    };
+  }
+
+  function normalizeLinkedShareCursorTuple(candidate = {}, fallback = createEmptyLinkedShareCursorTuple()) {
+    const fallbackTuple = fallback && typeof fallback === 'object'
+      ? fallback
+      : createEmptyLinkedShareCursorTuple();
+    return {
+      updatedAtMs: Math.max(
+        0,
+        Number(
+          normalizeOperationUpdatedAt(candidate?.updatedAtMs, fallbackTuple.updatedAtMs, {
+            context: 'linked-share-cursor:tuple',
+            onClamp: false
+          }) || 0
+        ) || 0
+      ),
+      opId: normalizeLinkedShareCursorOpId(candidate?.opId ?? fallbackTuple.opId),
+      sectorKey: normalizeLinkedShareCursorSectorKey(candidate?.sectorKey ?? fallbackTuple.sectorKey),
+      itemKey: normalizeLinkedShareCursorItemKey(candidate?.itemKey ?? fallbackTuple.itemKey)
+    };
+  }
+
+  function compareLinkedShareCursorTuple(left = {}, right = {}) {
+    const normalizedLeft = normalizeLinkedShareCursorTuple(left);
+    const normalizedRight = normalizeLinkedShareCursorTuple(right);
+    if (normalizedLeft.updatedAtMs !== normalizedRight.updatedAtMs) {
+      return normalizedLeft.updatedAtMs - normalizedRight.updatedAtMs;
+    }
+    const opIdCompare = normalizedLeft.opId.localeCompare(normalizedRight.opId);
+    if (opIdCompare !== 0) return opIdCompare;
+    const sectorCompare = normalizedLeft.sectorKey.localeCompare(normalizedRight.sectorKey);
+    if (sectorCompare !== 0) return sectorCompare;
+    return normalizedLeft.itemKey.localeCompare(normalizedRight.itemKey);
+  }
+
+  function buildLinkedShareCursorTupleFromOperation(operation = {}) {
+    return normalizeLinkedShareCursorTuple({
+      updatedAtMs: operation?.updatedAtMs,
+      opId: operation?.opId,
+      sectorKey: operation?.sectorKey,
+      itemKey: operation?.itemKey
+    });
+  }
+
+  async function syncLinkedSharedFeedNow(user, userId, options = {}) {
+    const normalizedMaxPages = Math.max(1, Math.min(32, Math.floor(Number(options?.maxPages || 4) || 4)));
+    const normalizedLimit = Math.max(1, Math.min(500, Math.floor(Number(options?.limit || 250) || 250)));
+    let cursorTuple = normalizeLinkedShareCursorTuple(getLinkedShareCursorTuple(user));
     let pages = 0;
     let applied = false;
+    let operationsPulled = 0;
+    let hasMore = false;
     let linkSignature = getLinkedShareLinkSignature(user);
     let restartedForLinkChange = false;
 
-    while (pages < 4) {
+    while (pages < normalizedMaxPages) {
       pages += 1;
+      const previousTuple = normalizeLinkedShareCursorTuple(cursorTuple);
       const response = await pullLinkedSharedFeedFromTransferApi(user, userId, {
-        sinceMs,
-        limit: 250
+        sinceMs: previousTuple.updatedAtMs,
+        cursorUpdatedAtMs: previousTuple.updatedAtMs,
+        cursorOpId: previousTuple.opId,
+        cursorSectorKey: previousTuple.sectorKey,
+        cursorItemKey: previousTuple.itemKey,
+        limit: normalizedLimit
       });
       if (!response || !Array.isArray(response.operations)) break;
 
@@ -2945,15 +3060,16 @@
         setLinkedShareLinkSignature(nextLinkSignature, user);
         linkSignature = nextLinkSignature;
         clearLinkedShareCache();
-        if (!restartedForLinkChange && sinceMs > 0) {
+        if (!restartedForLinkChange && compareLinkedShareCursorTuple(previousTuple, createEmptyLinkedShareCursorTuple()) > 0) {
           restartedForLinkChange = true;
-          sinceMs = 0;
+          cursorTuple = createEmptyLinkedShareCursorTuple();
           resetLinkedShareCursor(user);
           continue;
         }
       }
 
       const operations = response.operations;
+      operationsPulled += operations.length;
       if (operations.length > 0) {
         const didApply = applyLinkedShareOperationsToLocalStorage(operations, {
           linkSignature
@@ -2961,26 +3077,41 @@
         applied = applied || didApply;
       }
 
-      const previousSinceMs = sinceMs;
-      const operationCursorMs = operations.reduce(
-        (max, operation) => Math.max(max, normalizeOperationUpdatedAt(operation?.updatedAtMs, 0, { context: 'linked-share-op' })),
-        previousSinceMs
-      );
-      const responseCursorMs = Math.max(
-        normalizeOperationUpdatedAt(response?.cursorMs, previousSinceMs, { context: 'linked-share-cursor' }),
-        operationCursorMs
-      );
-      sinceMs = Math.max(previousSinceMs, responseCursorMs);
-      if (sinceMs > 0) {
-        setLinkedShareCursorMs(sinceMs);
+      const responseCursorTuple = normalizeLinkedShareCursorTuple({
+        updatedAtMs: response?.cursorUpdatedAtMs ?? response?.cursorMs ?? previousTuple.updatedAtMs,
+        opId: response?.cursorOpId,
+        sectorKey: response?.cursorSectorKey,
+        itemKey: response?.cursorItemKey
+      }, previousTuple);
+      const operationCursorTuple = operations.length > 0
+        ? operations
+          .map((operation) => buildLinkedShareCursorTupleFromOperation(operation))
+          .sort(compareLinkedShareCursorTuple)
+          .slice(-1)[0]
+        : null;
+      let nextCursorTuple = previousTuple;
+      if (compareLinkedShareCursorTuple(responseCursorTuple, nextCursorTuple) > 0) {
+        nextCursorTuple = responseCursorTuple;
       }
+      if (operationCursorTuple && compareLinkedShareCursorTuple(operationCursorTuple, nextCursorTuple) > 0) {
+        nextCursorTuple = operationCursorTuple;
+      }
+      cursorTuple = normalizeLinkedShareCursorTuple(nextCursorTuple, previousTuple);
+      setLinkedShareCursorTuple(cursorTuple, user);
       setScopedSyncMetaNumber(LINKED_SHARE_LAST_PULL_META_KEY, Date.now(), user);
 
-      const hasMore = response?.hasMore === true;
-      if (!hasMore || sinceMs <= previousSinceMs) break;
+      hasMore = response?.hasMore === true;
+      const progressed = compareLinkedShareCursorTuple(cursorTuple, previousTuple) > 0;
+      if (!hasMore || !progressed) break;
     }
 
-    return applied;
+    return {
+      applied,
+      hasMore,
+      pages,
+      operationsPulled,
+      cursor: normalizeLinkedShareCursorTuple(cursorTuple)
+    };
   }
 
   function clearListSyncRetryTimer() {
@@ -3577,8 +3708,8 @@
     }
 
     try {
-      const linkedApplied = await syncLinkedSharedFeedNow(user, userId);
-      applied = applied || linkedApplied;
+      const linkedSync = await syncLinkedSharedFeedNow(user, userId);
+      applied = applied || Boolean(linkedSync?.applied);
     } catch (error) {
       console.warn('Linked share pull failed:', error);
     }
@@ -4484,6 +4615,19 @@
         snapshot
       });
       return payload && typeof payload === 'object' ? payload : { ok: true };
+    },
+    async syncLinkedShareNow(options = {}) {
+      const { user, userId } = await requireAccountLinkSession();
+      const maxPages = Math.max(1, Math.min(32, Math.floor(Number(options?.maxPages || 8) || 8)));
+      const limit = Math.max(1, Math.min(500, Math.floor(Number(options?.limit || 500) || 500)));
+      const result = await syncLinkedSharedFeedNow(user, userId, {
+        maxPages,
+        limit
+      });
+      return {
+        ok: true,
+        ...result
+      };
     },
     async respondToAccountLinkRequest({ linkId, action, shareScopes } = {}) {
       const normalizedLinkId = String(linkId || '').trim();

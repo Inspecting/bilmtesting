@@ -998,7 +998,10 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    updateAccountLinkActionButtons({ busy: true, submitLabel: 'Sending...' });
+    const busySubmitLabel = accountLinkModalMode === 'approve'
+      ? 'Approving...'
+      : (accountLinkModalMode === 'edit' ? 'Saving...' : 'Sending...');
+    updateAccountLinkActionButtons({ busy: true, submitLabel: busySubmitLabel });
     try {
       if (accountLinkModalMode === 'approve') {
         await window.bilmAuth.respondToAccountLinkRequest({
@@ -1006,7 +1009,38 @@ document.addEventListener('DOMContentLoaded', () => {
           action: 'approve',
           shareScopes: selectedScopes
         });
-        showToast('Account link approved.', 'success');
+        if (accountLinkEmailStatus) accountLinkEmailStatus.textContent = 'Syncing shared data...';
+        setAccountLinkSummary('Account link approved. Syncing shared data...');
+        updateAccountLinkActionButtons({ busy: true, submitLabel: 'Syncing...' });
+        showToast('Syncing data...', 'info', 0);
+
+        if (typeof window.bilmAuth.syncLinkedShareNow === 'function') {
+          try {
+            const syncResult = await window.bilmAuth.syncLinkedShareNow({
+              maxPages: 16,
+              limit: 500
+            });
+            if (syncResult?.hasMore) {
+              setAccountLinkSummary('Account link approved. Sync in progress.');
+              showToast('Approved. Sync is still running.', 'info', 1600);
+            } else {
+              setAccountLinkSummary('Account link is active.');
+              showToast('Account link approved.', 'success');
+            }
+          } catch (syncError) {
+            console.warn('Post-approval linked-share sync failed:', syncError);
+            setAccountLinkSummary('Account link approved. Sync in progress.');
+            showToast('Approved. Sync continues in background.', 'info', 1800);
+            void window.bilmAuth.syncLinkedShareNow({
+              maxPages: 8,
+              limit: 500
+            }).catch((backgroundError) => {
+              console.warn('Background linked-share sync retry failed:', backgroundError);
+            });
+          }
+        } else {
+          showToast('Account link approved.', 'success');
+        }
       } else if (accountLinkModalMode === 'edit') {
         await window.bilmAuth.updateAccountLinkScopes({
           linkId: accountLinkEditingLinkId,
