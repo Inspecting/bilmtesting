@@ -1509,7 +1509,7 @@
       message: 'Copy this JSON backup data or download it as a file. It contains your site data as plain text.',
       code: backupJson
     });
-    backupStatus.textContent = `Export ready (${backupJson.length.toLocaleString()} chars).`;
+    backupStatus.textContent = 'Export ready.';
   });
 
   importDataBtn?.addEventListener('click', () => {
@@ -1518,7 +1518,7 @@
       message: 'Paste backup JSON or upload a JSON save file. Import auto-salvages spacing and extra wrapper text.',
       importMode: true
     });
-    backupStatus.textContent = 'Import popup opened.';
+    backupStatus.textContent = 'Import ready.';
   });
 
   importFileInput?.addEventListener('change', async (event) => {
@@ -1526,7 +1526,7 @@
     if (!file) return;
     const raw = await file.text();
     dataCodeField.value = raw;
-    backupStatus.textContent = `Loaded ${file.name}. We'll auto-salvage spacing and extra text on import.`;
+    backupStatus.textContent = `Loaded ${file.name}.`;
     showToast('Upload successful.', 'success');
     importFileInput.value = '';
   });
@@ -1574,26 +1574,28 @@
 
   applyImportBtn?.addEventListener('click', async () => {
     try {
+      backupStatus.textContent = 'Importing data...';
       pendingImportPayload = parseBackup(dataCodeField.value);
       if (!confirm('Import this backup now? This will overwrite current local data.')) return;
       await applyBackup(pendingImportPayload, 'settings-import');
-      backupStatus.textContent = 'Backup imported. Reloading...';
+      backupStatus.textContent = 'Import complete. Reloading...';
       setTimeout(() => location.reload(), 250);
     } catch (err) {
       console.error('Import failed:', err);
-      backupStatus.textContent = `Import failed: ${err.message}`;
+      backupStatus.textContent = 'Import failed.';
     }
   });
 
   cloudExportBtn?.addEventListener('click', async () => {
     try {
       showToast('Exporting...', 'info', 0);
+      backupStatus.textContent = 'Exporting...';
       await runSaveNow('manual');
-      backupStatus.textContent = 'Export successful.';
-      backupStatus.textContent = 'Cloud export successful. Your latest local data is now saved to your account.';
+      backupStatus.textContent = 'Backup saved.';
       showToast('Exported successfully.', 'success');
     } catch (err) {
-      backupStatus.textContent = `Cloud export failed: ${err.message}`;
+      console.error('Cloud export failed:', err);
+      backupStatus.textContent = 'Export failed.';
       showToast('Export failed.', 'error');
     }
   });
@@ -1613,7 +1615,11 @@
         includeSource: true
       });
       const snapshot = result?.snapshot || null;
-      if (!snapshot) throw new Error('No cloud backup found for this account.');
+      if (!snapshot) {
+        backupStatus.textContent = 'No cloud backup yet.';
+        showToast('No backup found.', 'info');
+        return;
+      }
       dataCodeField.value = formatBackup(snapshot);
       const sourceLabel = result?.source === 'data-api'
         ? 'data-api'
@@ -1623,15 +1629,17 @@
       const selectionReason = String(result?.selectionReason || '').trim();
       console.info('[cloud-import] source selected', {
         source: result?.source || 'none',
+        sourceLabel,
         mode: 'data-api-primary-fallback-firestore',
         selectionReason,
         transferCount,
         firestoreCount
       });
-      backupStatus.textContent = `Cloud backup loaded from ${sourceLabel}. (${transferCount} data-api items, ${firestoreCount} firebase items${selectionReason ? `, rule: ${selectionReason}` : ''}) Review the JSON data, then click Apply Import when ready.`;
-      showToast(`Cloud import ready (${sourceLabel}).`, 'success');
+      backupStatus.textContent = 'Backup loaded.';
+      showToast('Cloud import ready.', 'success');
     } catch (err) {
-      backupStatus.textContent = `Cloud import failed: ${err.message}`;
+      console.error('Cloud import failed:', err);
+      backupStatus.textContent = 'Cloud import failed.';
       showToast('Cloud import failed.', 'error');
     }
   });
@@ -1766,7 +1774,7 @@
         if (remoteUpdatedAtMs && remoteUpdatedAtMs <= lastCloudAppliedAt) return;
         lastCloudAppliedAt = remoteUpdatedAtMs || Date.now();
         lastUploadedSignature = snapshotSignature(event.snapshot);
-        cloudStatus.textContent = 'Cloud update detected. Sync engine will apply only if newer than local data.';
+        cloudStatus.textContent = 'Cloud update detected.';
       });
       window.bilmAuth.onSyncIssue?.((issue) => {
         renderDebugIssue({

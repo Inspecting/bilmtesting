@@ -109,6 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const accountLinkPartnerScopesText = document.getElementById('accountLinkPartnerScopesText');
   const accountLinkPendingCard = document.getElementById('accountLinkPendingCard');
   const accountLinkPendingText = document.getElementById('accountLinkPendingText');
+  const cancelPendingAccountLinkBtn = document.getElementById('cancelPendingAccountLinkBtn');
   const accountLinkIncomingCard = document.getElementById('accountLinkIncomingCard');
   const accountLinkIncomingList = document.getElementById('accountLinkIncomingList');
   const openAccountLinkModalBtn = document.getElementById('openAccountLinkModalBtn');
@@ -630,17 +631,47 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       return null;
     }
-    accountLinkTargetCapabilities = {
-      ok: true,
-      targetEmail: normalizedEmail
-    };
-    if (accountLinkEmailStatus && !quiet) {
-      accountLinkEmailStatus.textContent = 'Email ready. The secure request is checked when you submit.';
+    try {
+      await ensureAuthReady();
+      if (!window.bilmAuth?.getAccountLinkTargetCapabilities) {
+        throw new Error('Account link check is unavailable right now.');
+      }
+      const response = await window.bilmAuth.getAccountLinkTargetCapabilities(normalizedEmail);
+      const accountFound = response?.accountFound === true;
+      const requesterBlocked = response?.requesterBlocked === true;
+      const targetBlocked = response?.targetBlocked === true;
+      const canRequest = response?.canRequest === true || (accountFound && !requesterBlocked && !targetBlocked);
+      accountLinkTargetCapabilities = {
+        ok: response?.ok !== false,
+        targetEmail: String(response?.targetEmail || normalizedEmail).trim().toLowerCase(),
+        accountFound,
+        requesterBlocked,
+        targetBlocked,
+        canRequest
+      };
+
+      if (accountLinkEmailStatus && !quiet) {
+        if (!accountFound) {
+          accountLinkEmailStatus.textContent = 'No account found for that email.';
+        } else if (requesterBlocked) {
+          accountLinkEmailStatus.textContent = 'You already have a pending or active link.';
+        } else if (targetBlocked) {
+          accountLinkEmailStatus.textContent = 'That account cannot receive a new request right now.';
+        } else {
+          accountLinkEmailStatus.textContent = 'Email found. Ready to send.';
+        }
+      }
+      renderAccountLinkScopeOptions({
+        selectedScopes: getAccountLinkModalSelectedScopes()
+      });
+      return accountLinkTargetCapabilities;
+    } catch (error) {
+      accountLinkTargetCapabilities = null;
+      if (!quiet && accountLinkEmailStatus) {
+        accountLinkEmailStatus.textContent = error?.message || 'Could not verify email right now.';
+      }
+      return null;
     }
-    renderAccountLinkScopeOptions({
-      selectedScopes: getAccountLinkModalSelectedScopes()
-    });
-    return accountLinkTargetCapabilities;
   }
 
   function queueAccountLinkCapabilitiesLookup(targetEmail) {
@@ -713,6 +744,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (accountLinkIncomingCard) accountLinkIncomingCard.hidden = true;
         if (openAccountLinkModalBtn) openAccountLinkModalBtn.disabled = true;
         if (refreshAccountLinksBtn) refreshAccountLinksBtn.disabled = true;
+        if (cancelPendingAccountLinkBtn) {
+          cancelPendingAccountLinkBtn.disabled = true;
+          cancelPendingAccountLinkBtn.dataset.linkId = '';
+        }
         return;
       }
 
@@ -720,6 +755,10 @@ document.addEventListener('DOMContentLoaded', () => {
         setAccountLinkSummary('Account linking is unavailable until auth sync finishes loading.');
         if (openAccountLinkModalBtn) openAccountLinkModalBtn.disabled = true;
         if (refreshAccountLinksBtn) refreshAccountLinksBtn.disabled = true;
+        if (cancelPendingAccountLinkBtn) {
+          cancelPendingAccountLinkBtn.disabled = true;
+          cancelPendingAccountLinkBtn.dataset.linkId = '';
+        }
         return;
       }
 
@@ -758,6 +797,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (openAccountLinkModalBtn) openAccountLinkModalBtn.disabled = hasBlockingLink;
       if (editAccountLinkScopesBtn) editAccountLinkScopesBtn.disabled = !activeLink;
       if (unlinkAccountBtn) unlinkAccountBtn.disabled = !activeLink;
+      if (cancelPendingAccountLinkBtn) cancelPendingAccountLinkBtn.disabled = !outgoingPending;
 
       if (activeLink) {
         if (accountLinkActiveCard) accountLinkActiveCard.hidden = false;
@@ -779,11 +819,19 @@ document.addEventListener('DOMContentLoaded', () => {
           const targetEmail = outgoingPending?.partner?.email || outgoingPending?.target?.email || 'the other account';
           accountLinkPendingText.textContent = `Waiting for ${targetEmail} to approve your request.`;
         }
+        if (cancelPendingAccountLinkBtn) {
+          cancelPendingAccountLinkBtn.disabled = false;
+          cancelPendingAccountLinkBtn.dataset.linkId = String(outgoingPending?.id || '').trim();
+        }
         if (!activeLink) {
-          setAccountLinkSummary('You have a pending request. Sharing starts after the other account approves.');
+          setAccountLinkSummary('You have a pending request. You can cancel it at any time.');
         }
       } else if (accountLinkPendingCard) {
         accountLinkPendingCard.hidden = true;
+        if (cancelPendingAccountLinkBtn) {
+          cancelPendingAccountLinkBtn.disabled = true;
+          cancelPendingAccountLinkBtn.dataset.linkId = '';
+        }
       }
 
       if (accountLinkIncomingCard) {
@@ -934,6 +982,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (String(accountLinkTargetCapabilities?.targetEmail || '').trim().toLowerCase() !== targetEmail) {
       await lookupAccountLinkCapabilities(targetEmail, { quiet: true });
+    }
+    if (accountLinkModalMode === 'create') {
+      if (!accountLinkTargetCapabilities?.accountFound) {
+        throw new Error('No account found for that email.');
+      }
+      if (accountLinkTargetCapabilities?.requesterBlocked) {
+        throw new Error('You already have a pending or active account link.');
+      }
+      if (accountLinkTargetCapabilities?.targetBlocked) {
+        throw new Error('That account cannot receive a new request right now.');
+      }
+      if (accountLinkTargetCapabilities?.canRequest === false) {
+        throw new Error('This request cannot be sent right now.');
+      }
     }
 
     updateAccountLinkActionButtons({ busy: true, submitLabel: 'Sending...' });
@@ -1226,7 +1288,25 @@ document.addEventListener('DOMContentLoaded', () => {
       code: backupJson,
       importMode: false
     });
-    transferStatusText.textContent = 'Export popup opened.';
+    transferStatusText.textContent = 'Export ready.';
+  });
+
+  cancelPendingAccountLinkBtn?.addEventListener('click', async () => {
+    try {
+      await ensureAuthReady();
+      const pendingLink = getOutgoingPendingLink();
+      if (!pendingLink?.id) return;
+      const partnerEmail = pendingLink?.partner?.email || pendingLink?.target?.email || 'this account';
+      if (!confirm(`Cancel your request to ${partnerEmail}?`)) return;
+      cancelPendingAccountLinkBtn.disabled = true;
+      await window.bilmAuth.unlinkAccountLink(String(pendingLink.id || '').trim());
+      showToast('Request canceled.', 'success');
+      await refreshAccountLinkState({ silent: true });
+    } catch (error) {
+      statusText.textContent = `Cancel failed: ${error.message}`;
+    } finally {
+      cancelPendingAccountLinkBtn.disabled = false;
+    }
   });
 
   importDataBtn?.addEventListener('click', () => {
@@ -1237,7 +1317,7 @@ document.addEventListener('DOMContentLoaded', () => {
       message: 'Paste backup JSON or upload a JSON save file. Import auto-salvages spacing and extra wrapper text.',
       importMode: true
     });
-    transferStatusText.textContent = 'Import popup opened.';
+    transferStatusText.textContent = 'Import ready.';
   });
 
   openMergeModalBtn?.addEventListener('click', () => {
@@ -1254,7 +1334,7 @@ document.addEventListener('DOMContentLoaded', () => {
       message: 'Load backup JSON for slot 1. Apply Import saves this slot for merge.',
       importMode: true
     });
-    transferStatusText.textContent = 'Import 1 popup opened.';
+    transferStatusText.textContent = 'Import 1 ready.';
   });
 
   importTwoBtn?.addEventListener('click', () => {
@@ -1266,7 +1346,7 @@ document.addEventListener('DOMContentLoaded', () => {
       message: 'Load backup JSON for slot 2. Apply Import saves this slot for merge.',
       importMode: true
     });
-    transferStatusText.textContent = 'Import 2 popup opened.';
+    transferStatusText.textContent = 'Import 2 ready.';
   });
 
   copyDataBtn?.addEventListener('click', async () => {
@@ -1302,7 +1382,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const file = event.target.files?.[0];
     if (!file) return;
     dataCodeField.value = await file.text();
-    transferStatusText.textContent = `Loaded ${file.name}. We'll auto-salvage spacing and extra text on import.`;
+    transferStatusText.textContent = `Loaded ${file.name}.`;
     showToast('Upload successful.', 'success');
     importFileInput.value = '';
   });
@@ -1322,14 +1402,16 @@ document.addEventListener('DOMContentLoaded', () => {
   cloudExportBtn?.addEventListener('click', async () => {
     try {
       showToast('Exporting...', 'info', 0);
+      transferStatusText.textContent = 'Exporting...';
       const canProceed = await requestCloudLoginPermission();
       if (!canProceed) throw new Error('Cloud export cancelled until you choose to log in.');
       await window.bilmAuth.saveCloudSnapshot(collectBackupData());
-      transferStatusText.textContent = 'Cloud export successful. Your latest local data is now saved to your account.';
+      transferStatusText.textContent = 'Backup saved.';
       refreshLastSyncText();
       showToast('Exported successfully.', 'success');
     } catch (error) {
-      transferStatusText.textContent = `Cloud export failed: ${error.message}`;
+      console.error('Cloud export failed:', error);
+      transferStatusText.textContent = 'Export failed.';
       showToast('Export failed.', 'error');
     }
   });
@@ -1344,7 +1426,11 @@ document.addEventListener('DOMContentLoaded', () => {
         includeSource: true
       });
       const snapshot = result?.snapshot || null;
-      if (!snapshot) throw new Error('No cloud backup found for this account.');
+      if (!snapshot) {
+        transferStatusText.textContent = 'No cloud backup yet.';
+        showToast('No backup found.', 'info');
+        return;
+      }
       dataCodeField.value = formatBackup(snapshot);
       const sourceLabel = result?.source === 'data-api'
         ? 'data-api'
@@ -1354,21 +1440,24 @@ document.addEventListener('DOMContentLoaded', () => {
       const selectionReason = String(result?.selectionReason || '').trim();
       console.info('[cloud-import] source selected', {
         source: result?.source || 'none',
+        sourceLabel,
         mode: 'data-api-primary-fallback-firestore',
         selectionReason,
         transferCount,
         firestoreCount
       });
-      transferStatusText.textContent = `Cloud backup loaded from ${sourceLabel}. (${transferCount} data-api items, ${firestoreCount} firebase items${selectionReason ? `, rule: ${selectionReason}` : ''}) Review the JSON data, then select Apply Import when ready.`;
-      showToast(`Cloud import ready (${sourceLabel}).`, 'success');
+      transferStatusText.textContent = 'Backup loaded.';
+      showToast('Cloud import ready.', 'success');
     } catch (error) {
-      transferStatusText.textContent = `Cloud import failed: ${error.message}`;
+      console.error('Cloud import failed:', error);
+      transferStatusText.textContent = 'Cloud import failed.';
       showToast('Cloud import failed.', 'error');
     }
   });
 
   applyImportBtn?.addEventListener('click', async () => {
     try {
+      transferStatusText.textContent = 'Importing data...';
       pendingImportPayload = parseBackup(dataCodeField.value);
       if (activeImportSlot) {
         importSlots[activeImportSlot] = pendingImportPayload;
@@ -1385,10 +1474,8 @@ document.addEventListener('DOMContentLoaded', () => {
       transferStatusText.textContent = 'Import complete. Reloading...';
       setTimeout(() => location.reload(), 250);
     } catch (error) {
-      const hint = /JSON|invalid|empty|characters/i.test(String(error?.message || ''))
-        ? ' Import now auto-cleans spacing and hidden characters, so this backup may be damaged. Try exporting again from source, using Cloud Import, or loading a .json backup file.'
-        : '';
-      transferStatusText.textContent = `Import failed: ${error.message}.${hint}`;
+      console.error('Import failed:', error);
+      transferStatusText.textContent = 'Import failed.';
     }
   });
 
@@ -1484,11 +1571,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (mergeDataBtn.disabled) return;
       const merged = mergeBackupPayloads(importSlots.one, importSlots.two, collectBackupData());
       if (!confirm('Merge Import 1 and Import 2 and apply now? This will overwrite current local data.')) return;
+      transferStatusText.textContent = 'Importing data...';
       await applyBackup(merged, 'account-merge-import');
       transferStatusText.textContent = 'Merged data applied. Reloading...';
       setTimeout(() => location.reload(), 250);
     } catch (error) {
-      transferStatusText.textContent = `Merge failed: ${error.message}`;
+      console.error('Merge failed:', error);
+      transferStatusText.textContent = 'Merge failed.';
     }
   });
 

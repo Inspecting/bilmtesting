@@ -598,6 +598,8 @@
   const LINKED_SHARE_LAST_PULL_META_KEY = 'lastLinkedSharePullAtMs';
   const LINKED_SHARE_LINK_SIGNATURE_META_KEY = 'linkedShareLinkSignature';
   const LINKED_SHARE_CACHE_KEY = 'bilm-linked-share-cache-v1';
+  const IMPORT_SAFETY_SNAPSHOT_KEY = 'bilm-import-safety-snapshot-v1';
+  const IMPORT_SAFETY_SNAPSHOT_MAX_CHARS = 600000;
   const SYNC_FUTURE_TIME_WINDOW_MS = 10 * 60 * 1000;
   const SYNC_PENDING_DIAGNOSTIC_LIMIT = 20;
   const SYNC_MAX_ITEM_KEY_LENGTH = 255;
@@ -637,13 +639,15 @@
   const FIRESTORE_MIRROR_MAX_BYTES = 900000;
   const FIRESTORE_FORBIDDEN_KEY_PATTERN = /[~*/\[\]]/;
   const LOCAL_ONLY_LOCAL_STORAGE_KEYS = new Set([
-    'bilm-global-message-dismissed-migrating-data'
+    'bilm-global-message-dismissed-migrating-data',
+    IMPORT_SAFETY_SNAPSHOT_KEY
   ]);
   const LOCAL_ONLY_SYNC_EXCLUDED_KEYS = new Set([
     LINKED_SHARE_CACHE_KEY,
     INCOGNITO_BACKUP_KEY,
     INCOGNITO_SEARCH_MAP_KEY,
-    DEBUG_ISSUE_LOCAL_KEY
+    DEBUG_ISSUE_LOCAL_KEY,
+    IMPORT_SAFETY_SNAPSHOT_KEY
   ]);
   const LIST_KEY_TO_SECTOR_KEY = Object.freeze({
     'bilm-favorites': 'favorites',
@@ -1140,12 +1144,17 @@
     const source = payload && typeof payload === 'object' && !Array.isArray(payload)
       ? payload
       : {};
+    const accountFound = source.accountFound === true;
+    const requesterBlocked = source.requesterBlocked === true;
+    const targetBlocked = source.targetBlocked === true;
+    const canRequest = source.canRequest === true || (accountFound && !requesterBlocked && !targetBlocked);
     return {
       ok: source.ok !== false,
       targetEmail: String(source.targetEmail || normalizedEmail || '').trim().toLowerCase(),
-      accountFound: source.accountFound === true,
-      requesterBlocked: source.requesterBlocked === true,
-      targetBlocked: source.targetBlocked === true
+      accountFound,
+      requesterBlocked,
+      targetBlocked,
+      canRequest
     };
   }
 
@@ -1431,6 +1440,36 @@
     }
   }
 
+  async function fetchCloudSnapshotCandidates(user, userId, contextLabel = 'cloud-snapshot') {
+    const normalizedLabel = String(contextLabel || 'cloud-snapshot').trim() || 'cloud-snapshot';
+    const [transferResult, firestoreResult] = await Promise.allSettled([
+      loadSnapshotFromTransferApi(user, userId),
+      readFirebaseBackupSnapshot(user)
+    ]);
+
+    let transferSnapshot = null;
+    let transferError = null;
+    if (transferResult.status === 'fulfilled') {
+      transferSnapshot = transferResult.value;
+    } else {
+      transferError = transferResult.reason;
+      console.warn(`[${normalizedLabel}] Data API snapshot load failed:`, transferError);
+    }
+
+    let firestoreSnapshot = null;
+    if (firestoreResult.status === 'fulfilled') {
+      firestoreSnapshot = firestoreResult.value;
+    } else {
+      console.warn(`[${normalizedLabel}] Firestore snapshot load failed:`, firestoreResult.reason);
+    }
+
+    return {
+      transferSnapshot,
+      firestoreSnapshot,
+      transferError
+    };
+  }
+
   async function ensureSectorBootstrapForUser(user, options = {}) {
     const forceCheck = options?.forceCheck === true;
     if (!user || transferApiDisabled || !isSyncEnabled()) return false;
@@ -1457,9 +1496,11 @@
     let migrationSource = 'local_fallback';
     let operations = [];
     try {
-      const transferSnapshot = await loadSnapshotFromTransferApi(user, userId);
-      const firebaseSnapshot = await readFirebaseBackupSnapshot(user);
-      const selected = choosePreferredCloudSnapshot(transferSnapshot, firebaseSnapshot);
+      const {
+        transferSnapshot,
+        firestoreSnapshot
+      } = await fetchCloudSnapshotCandidates(user, userId, 'sector-bootstrap');
+      const selected = choosePreferredCloudSnapshot(transferSnapshot, firestoreSnapshot);
       if (selected.snapshot) {
         operations = sectorBootstrapOperationsFromSnapshot(selected.snapshot, nowMs);
         migrationSource = selected.source === 'data-api' ? 'd1_snapshot' : 'firebase_snapshot';
@@ -2150,6 +2191,32 @@
         version: 1
       }
     };
+  }
+
+  function saveImportSafetySnapshot(reason = 'import') {
+    try {
+      const snapshot = collectBackupData();
+      if (!snapshot || snapshot.schema !== 'bilm-backup-v1') return false;
+      const payload = {
+        schema: 'bilm-import-safety-v1',
+        savedAtMs: Date.now(),
+        reason: String(reason || 'import').trim() || 'import',
+        snapshot
+      };
+      const serialized = JSON.stringify(payload);
+      if (serialized.length > IMPORT_SAFETY_SNAPSHOT_MAX_CHARS) {
+        console.info('[import-safety] skipped saving rollback snapshot (payload too large).', {
+          size: serialized.length,
+          max: IMPORT_SAFETY_SNAPSHOT_MAX_CHARS
+        });
+        return false;
+      }
+      localStorage.setItem(IMPORT_SAFETY_SNAPSHOT_KEY, serialized);
+      return true;
+    } catch (error) {
+      console.warn('Import safety snapshot save failed:', error);
+      return false;
+    }
   }
 
   function applySnapshotTransaction(snapshot, {
@@ -3717,8 +3784,10 @@
       snapshotRecoveryCheckedThisSession = true;
       try {
         const userId = getTransferUserId(user);
-        const transferSnapshot = await loadSnapshotFromTransferApi(user, userId);
-        const firestoreSnapshot = await readFirebaseBackupSnapshot(user);
+        const {
+          transferSnapshot,
+          firestoreSnapshot
+        } = await fetchCloudSnapshotCandidates(user, userId, 'snapshot-recovery');
         const selected = choosePreferredCloudSnapshot(transferSnapshot, firestoreSnapshot);
         if (shouldApplyRemoteSnapshot(selected.snapshot)) {
           applyRemoteSnapshot(selected.snapshot, {
@@ -4261,15 +4330,11 @@
       const userId = getTransferUserId(user);
       const mode = String(options?.mode || 'data-api-primary-fallback-firestore').trim().toLowerCase();
       const includeSource = options?.includeSource === true;
-      let transferSnapshot = null;
-      let transferError = null;
-      try {
-        transferSnapshot = await loadSnapshotFromTransferApi(user, userId);
-      } catch (error) {
-        transferError = error;
-        console.warn('Data API load failed (falling back to backup source):', error);
-      }
-      const firestoreSnapshot = await readFirebaseBackupSnapshot(user);
+      const {
+        transferSnapshot,
+        firestoreSnapshot,
+        transferError
+      } = await fetchCloudSnapshotCandidates(user, userId, 'manual-cloud-import');
       const transferItemCount = transferSnapshot && transferSnapshot.schema === 'bilm-backup-v1'
         ? getSnapshotMergeableItemCount(transferSnapshot)
         : 0;
@@ -4369,6 +4434,7 @@
       const reason = String(options?.reason || options?.source || 'import').trim() || 'import';
       const preserveSyncPreference = options?.preserveSyncPreference !== false;
       const preserveSyncMeta = options?.preserveSyncMeta !== false;
+      const safetySnapshotSaved = saveImportSafetySnapshot(reason);
       const applied = applySnapshotTransaction(snapshot, {
         reason,
         preserveSyncPreference,
@@ -4380,6 +4446,7 @@
       return {
         ok: true,
         reason,
+        safetySnapshotSaved,
         appliedAtMs: Date.now()
       };
     },

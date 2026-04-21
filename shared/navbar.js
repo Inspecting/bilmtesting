@@ -22,9 +22,9 @@ function detectBasePath() {
 }
 
 const BASE_PATH = detectBasePath();
-const NAVBAR_ASSET_CACHE_KEY = 'bilm-navbar-assets-v3';
+const NAVBAR_ASSET_CACHE_KEY = 'bilm-navbar-assets-v4';
 const NAVBAR_ASSET_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-const LEGACY_NAVBAR_ASSET_CACHE_KEYS = ['bilm-navbar-assets-v1', 'bilm-navbar-assets-v2'];
+const LEGACY_NAVBAR_ASSET_CACHE_KEYS = ['bilm-navbar-assets-v1', 'bilm-navbar-assets-v2', 'bilm-navbar-assets-v3'];
 
 function withBase(path) {
   const normalized = path.startsWith('/') ? path : `/${path}`;
@@ -426,18 +426,8 @@ async function maybeActivateProxiedMode() {
 
   function setupGlobalBanner() {
     if (!globalBanner) return;
-    const dismissed = isGlobalBannerDismissed();
-    globalBanner.hidden = dismissed;
-    globalBanner.setAttribute('aria-hidden', dismissed ? 'true' : 'false');
-
-    if (!dismissed && globalBannerCloseBtn && globalBannerCloseBtn.dataset.bound !== '1') {
-      globalBannerCloseBtn.dataset.bound = '1';
-      globalBannerCloseBtn.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        dismissGlobalBanner();
-      });
-    }
+    globalBanner.hidden = true;
+    globalBanner.setAttribute('aria-hidden', 'true');
   }
 
   function loadList(key) {
