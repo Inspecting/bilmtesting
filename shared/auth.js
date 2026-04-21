@@ -406,13 +406,33 @@
     });
   }
 
-  async function createAccountLinkRequestInTransferApi(user, userId, { targetEmail, shareScopes }) {
+  function normalizeAccountLinkSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) return null;
+    if (String(snapshot?.schema || '').trim() === 'bilm-backup-v1') return snapshot;
+    return {
+      ...snapshot,
+      schema: 'bilm-backup-v1'
+    };
+  }
+
+  async function createAccountLinkRequestInTransferApi(user, userId, { targetEmail, shareScopes, snapshot }) {
+    const normalizedSnapshot = normalizeAccountLinkSnapshot(snapshot);
+    if (!normalizedSnapshot) {
+      throw new Error('Snapshot data is required. Please refresh and try again.');
+    }
     return await callAccountLinkApi(user, ACCOUNT_LINK_REQUEST_PATH, {
       method: 'POST',
       body: {
         userId,
         targetEmail: String(targetEmail || '').trim().toLowerCase(),
-        shareScopes: shareScopes && typeof shareScopes === 'object' ? shareScopes : {}
+        shareScopes: shareScopes && typeof shareScopes === 'object' ? shareScopes : {},
+        // Keep both legacy and strict paths for cross-version worker compatibility.
+        data: {
+          snapshot: {
+            value: normalizedSnapshot
+          }
+        },
+        snapshot: normalizedSnapshot
       }
     });
   }
@@ -4286,10 +4306,12 @@
         throw new Error('Target email is required.');
       }
       const normalizedScopes = normalizeAccountLinkShareScopes(shareScopes);
+      const snapshot = collectBackupData();
       const { user, userId } = await requireAccountLinkSession();
       const payload = await createAccountLinkRequestInTransferApi(user, userId, {
         targetEmail: normalizedEmail,
-        shareScopes: normalizedScopes
+        shareScopes: normalizedScopes,
+        snapshot
       });
       return payload && typeof payload === 'object' ? payload : { ok: true };
     },
