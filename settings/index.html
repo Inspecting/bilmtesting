@@ -29,6 +29,10 @@
       box-sizing: border-box;
     }
 
+    [hidden] {
+      display: none !important;
+    }
+
     html, body {
       height: 100%;
       font-family: 'Poppins', sans-serif;
@@ -514,6 +518,7 @@
 
   <script src="../shared/access.js"></script>
   <script src="../shared/theme.js"></script>
+  <script src="../shared/admin.js"></script>
     </head>
 <body>
 
@@ -536,7 +541,7 @@
       <strong>History & Privacy</strong>
       <span>Review or clear watch history, search history, and local privacy data.</span>
     </a>
-    <a class="settings-hub-link" href="../settings/maintenance/">
+    <a class="settings-hub-link" id="maintenanceHubLink" href="../settings/maintenance/" hidden>
       <strong>Maintenance</strong>
       <span>Health checks, recovery tools, cache cleanup, and deeper diagnostics.</span>
     </a>
@@ -723,7 +728,7 @@
 
 
 
-    <section class="settings-card">
+    <section class="settings-card" id="maintenanceCard" hidden>
       <h2>Maintenance</h2>
       <p>Quick debug status is shown here. Advanced maintenance tools are in the dedicated page.</p>
 
@@ -843,6 +848,8 @@
   const proxiedControlRow = document.getElementById('proxiedControlRow');
   const proxiedControlHint = document.getElementById('proxiedControlHint');
   const proxiedToggle = document.getElementById('proxiedToggle');
+  const maintenanceHubLink = document.getElementById('maintenanceHubLink');
+  const maintenanceCard = document.getElementById('maintenanceCard');
   const openMaintenanceBtn = document.getElementById('openMaintenanceBtn');
   const exportDataBtn = document.getElementById('exportDataBtn');
   const importDataBtn = document.getElementById('importDataBtn');
@@ -906,6 +913,7 @@
   let syncDebounceTimer = null;
   let applyingRemoteSync = false;
   let lastCloudAppliedAt = 0;
+  let maintenanceVisibilityNonce = 0;
 
   function showToast(message, tone = 'info', duration = 1000) {
     window.bilmToast?.show?.(message, { tone, duration });
@@ -1053,6 +1061,41 @@
       proxiedToggle.disabled = !loggedIn;
       proxiedToggle.setAttribute('aria-disabled', loggedIn ? 'false' : 'true');
     }
+  }
+
+  function applyMaintenanceVisibility(isAdmin) {
+    const allowed = Boolean(isAdmin);
+    if (maintenanceHubLink) maintenanceHubLink.hidden = !allowed;
+    if (maintenanceCard) maintenanceCard.hidden = !allowed;
+    if (openMaintenanceBtn) openMaintenanceBtn.disabled = !allowed;
+  }
+
+  async function updateMaintenanceVisibility(user = null) {
+    const nonce = ++maintenanceVisibilityNonce;
+    const email = String(user?.email || window.bilmAuth?.getCurrentUser?.()?.email || '').trim().toLowerCase();
+    if (!email) {
+      applyMaintenanceVisibility(false);
+      return;
+    }
+
+    let isAdmin = false;
+    if (window.bilmAdmin?.isAdminEmail) {
+      try {
+        isAdmin = await window.bilmAdmin.isAdminEmail(email);
+      } catch (error) {
+        console.warn('Admin lookup failed on settings page:', error);
+        isAdmin = window.bilmAdmin?.isAdminEmailLocal?.(email) === true;
+      }
+    } else {
+      isAdmin = email === 'watchbilm@gmail.com';
+    }
+
+    if (nonce !== maintenanceVisibilityNonce) return;
+    applyMaintenanceVisibility(isAdmin);
+  }
+
+  function getMaintenanceUrl() {
+    return 'https://admin.watchbilm.org/settings/maintenance/';
   }
 
   function updatePresetVisuals() {
@@ -1361,6 +1404,7 @@
       cloudStatus.textContent = isSyncEnabled()
         ? 'Account ready. Live sync is active on this device.'
         : 'Account ready. Live sync is paused on this device.';
+      void updateMaintenanceVisibility(user);
     } else {
       accountStatusText.textContent = 'You are in guest mode. Log in to use account transfer tools.';
       openSignInBtn.hidden = false;
@@ -1369,6 +1413,7 @@
       openAccountSettingsBtn.disabled = false;
       updateProxiedControl(null);
       cloudStatus.textContent = 'Log in to use account features.';
+      applyMaintenanceVisibility(false);
     }
   }
 
@@ -1686,7 +1731,8 @@
   });
 
   openMaintenanceBtn?.addEventListener('click', () => {
-    window.location.href = '../settings/maintenance/';
+    if (openMaintenanceBtn.disabled) return;
+    window.location.href = getMaintenanceUrl();
   });
 
   loginForm.addEventListener('submit', (event) => {
@@ -1788,6 +1834,7 @@
       cloudStatus.textContent = `Auth setup failed: ${err.message}`;
       openAccountSettingsBtn.disabled = false;
       updateProxiedControl(null);
+      applyMaintenanceVisibility(false);
     }
   }
 

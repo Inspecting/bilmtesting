@@ -76,6 +76,7 @@ async function mockAuthScript(page, { loggedIn = false, email = 'tester@watchbil
           async respondToAccountLinkRequest() { return { ok: true }; },
           async updateAccountLinkScopes() { return { ok: true }; },
           async unlinkAccountLink() { return { ok: true }; },
+          async resetAccountData() { return { ok: true }; },
           withMutationSuppressed(task) {
             return typeof task === 'function' ? task() : undefined;
           }
@@ -1378,14 +1379,33 @@ test('games routes show removed page with home action', async ({ page }) => {
   await expect(page.locator('#goHomeLink')).toHaveAttribute('href', /\/home\/?$/);
 });
 
-test('settings exposes diagnostics controls', async ({ page }) => {
+test('settings hides maintenance controls for guests', async ({ page }) => {
   await mockAuthScript(page, { loggedIn: false });
   await page.goto('/settings/');
-  await expect(page.locator('#openMaintenanceBtn')).toBeVisible();
-  await page.click('#openMaintenanceBtn');
-  await expect(page).toHaveURL(/\/settings\/maintenance\/?$/);
+  await expect(page.locator('#maintenanceHubLink')).toBeHidden();
+  await expect(page.locator('#maintenanceCard')).toBeHidden();
+});
+
+test('admin can open maintenance controls from settings', async ({ page }) => {
+  await mockAuthScript(page, { loggedIn: true, email: 'watchbilm@gmail.com' });
+  await page.goto('/settings/');
+  await expect(page.locator('#maintenanceHubLink')).toBeVisible();
+  await expect(page.locator('#maintenanceCard')).toBeVisible();
+  await expect(page.locator('#openMaintenanceBtn')).toBeEnabled();
+});
+
+test('admin can access maintenance route', async ({ page }) => {
+  await mockAuthScript(page, { loggedIn: true, email: 'watchbilm@gmail.com' });
+  await page.goto('/settings/maintenance/', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#maintenanceGatePanel')).toBeHidden();
   await expect(page.locator('#runHealthCheckBtn')).toBeVisible();
-  await expect(page.locator('#restoreMigrationBtn')).toBeVisible();
+});
+
+test('non-admin is blocked from maintenance route', async ({ page }) => {
+  await mockAuthScript(page, { loggedIn: true, email: 'member@watchbilm.org' });
+  await page.goto('/settings/maintenance/', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#maintenanceGateTitle')).toContainText('Admin Only');
+  await expect(page).toHaveURL(/\/settings\/account\/?$/);
 });
 
 test('proxied mode replaces loading page for logged-in users', async ({ page }) => {
@@ -1482,7 +1502,7 @@ test('settings and account auth actions open shared navbar auth modal', async ({
   await expect(page.locator('.settings-hub')).toBeVisible();
   await expect(page.locator('.settings-hub')).toContainText('Account & Backup');
   await expect(page.locator('.settings-hub')).toContainText('History & Privacy');
-  await expect(page.locator('.settings-hub')).toContainText('Maintenance');
+  await expect(page.locator('#maintenanceHubLink')).toBeHidden();
 
   await page.goto('/settings/account/', { waitUntil: 'domcontentloaded' });
   await expect(page.locator('.account-quick-nav')).toBeVisible();
@@ -1493,6 +1513,31 @@ test('settings and account auth actions open shared navbar auth modal', async ({
     const modal = root?.getElementById('navbarAuthModal');
     return Boolean(modal && !modal.hidden);
   })).toBe(true);
+});
+
+test('account settings exposes reset data for guests', async ({ page }) => {
+  await mockAuthScript(page, { loggedIn: false });
+  await page.goto('/settings/account/', { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('#resetDataBtn')).toBeVisible();
+  await expect(page.locator('#resetStatusText')).toContainText('Clears local data.');
+});
+
+test('reset data failure keeps action enabled', async ({ page }) => {
+  await mockAuthScript(page, { loggedIn: true, email: 'tester@watchbilm.org' });
+  await page.goto('/settings/account/', { waitUntil: 'domcontentloaded' });
+
+  await page.evaluate(() => {
+    window.confirm = () => true;
+    window.prompt = () => 'RESET';
+    window.bilmAuth.resetAccountData = async () => {
+      throw new Error('forced reset failure');
+    };
+  });
+
+  const resetButton = page.locator('#resetDataBtn');
+  await resetButton.click();
+  await expect(page.locator('#resetStatusText')).toContainText('Reset failed.');
+  await expect(resetButton).toBeEnabled();
 });
 
 test('account linking modal shows non-chat sharing scopes', async ({ page }) => {

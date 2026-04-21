@@ -153,7 +153,11 @@
 
       <section class="panel danger-panel" id="dangerPanel">
         <h2>Danger Zone</h2>
-        <p class="muted">Delete account permanently from the site and remove account data.</p>
+        <p class="muted">Reset local/account data or permanently delete your account.</p>
+        <div class="stack">
+          <button id="resetDataBtn" class="btn btn-danger" type="button">Reset Data</button>
+          <p id="resetStatusText" class="muted">Clears local data. Logged-in users can also wipe account cloud data.</p>
+        </div>
         <div class="stack">
           <input id="deletePassword" type="password" placeholder="Type password to confirm delete" aria-label="Delete account password confirmation" autocomplete="current-password" />
           <button id="deleteAccountBtn" class="btn btn-danger" type="button">Delete Account</button>

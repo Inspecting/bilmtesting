@@ -6,6 +6,9 @@ import path from 'node:path';
 const rootDir = path.resolve(process.cwd());
 const port = Number(process.env.PORT || 8080);
 const STATIC_CACHE_CONTROL = 'public, max-age=300, stale-while-revalidate=86400';
+const ADMIN_HOSTNAME = 'admin.watchbilm.org';
+const PRIMARY_SITE_HOSTNAMES = new Set(['watchbilm.org', 'www.watchbilm.org', 'bilm.fly.dev']);
+const DEFAULT_ADMIN_EMAILS = Object.freeze(['watchbilm@gmail.com']);
 const DEFAULT_HEALTH_CHECK_ALLOWED_HOSTS = new Set([
   'storage-api.watchbilm.org',
   'data-api.watchbilm.org',
@@ -44,6 +47,24 @@ function parseEnvBool(name, fallback = false) {
   return fallback;
 }
 
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function resolveAdminEmailAllowlist() {
+  const fromEnv = String(process.env.BILM_ADMIN_EMAILS || '').trim();
+  const emails = new Set();
+  [...DEFAULT_ADMIN_EMAILS, ...fromEnv.split(',')]
+    .map((entry) => normalizeEmail(entry))
+    .filter((entry) => Boolean(entry) && isValidEmail(entry))
+    .forEach((entry) => emails.add(entry));
+  return [...emails];
+}
+
 function resolveChatApiBase() {
   const rawValue = String(process.env.CHAT_API_BASE || 'https://chat-api.watchbilm.org').trim();
   if (!rawValue) return 'https://chat-api.watchbilm.org';
@@ -61,6 +82,7 @@ function resolveChatApiBase() {
 }
 
 const HEALTH_CHECK_ALLOWED_HOSTS = resolveHealthCheckAllowedHosts();
+const ADMIN_EMAIL_ALLOWLIST = resolveAdminEmailAllowlist();
 const CHAT_API_BASE = resolveChatApiBase();
 const CHAT_PROXY_ALLOW_AUTH_BYPASS = parseEnvBool('CHAT_PROXY_ALLOW_AUTH_BYPASS', false);
 const RATE_LIMIT_STORE = new Map();
@@ -90,6 +112,7 @@ const RATE_LIMITS = Object.freeze({
 const CORS_ALLOWED_ORIGINS = new Set([
   'https://watchbilm.org',
   'https://www.watchbilm.org',
+  'https://admin.watchbilm.org',
   'https://bilm.fly.dev',
   'https://inspecting.github.io',
   'https://cdn.jsdelivr.net'
@@ -203,6 +226,30 @@ function normalizeRequestOrigin(rawOrigin) {
   } catch {
     return '';
   }
+}
+
+function getRequestHost(req) {
+  const host = String(req?.headers?.host || '').trim().toLowerCase();
+  if (!host) return '';
+  const bracketIndex = host.indexOf(']');
+  if (host.startsWith('[') && bracketIndex >= 0) {
+    const portIndex = host.indexOf(':', bracketIndex);
+    return portIndex > -1 ? host.slice(0, portIndex) : host;
+  }
+  const firstColon = host.indexOf(':');
+  return firstColon > -1 ? host.slice(0, firstColon) : host;
+}
+
+function isMaintenancePath(pathname) {
+  const normalized = String(pathname || '').trim();
+  return normalized === '/settings/maintenance'
+    || normalized === '/settings/maintenance/'
+    || normalized.startsWith('/settings/maintenance/');
+}
+
+function buildAdminMaintenanceRedirectLocation(rawRequestTarget) {
+  const normalizedTarget = String(rawRequestTarget || '/settings/maintenance/').trim() || '/settings/maintenance/';
+  return `https://${ADMIN_HOSTNAME}${normalizedTarget.startsWith('/') ? normalizedTarget : `/${normalizedTarget}`}`;
 }
 
 function appendVary(existingValue, nextValue) {
@@ -1214,6 +1261,40 @@ async function handleHealthCheck(req, res) {
   });
 }
 
+async function handleAdminConfig(req, res) {
+  const corsHeaders = buildCorsHeaders(req);
+  if (req.method === 'OPTIONS') {
+    const preflightCorsHeaders = buildCorsHeaders(req, {
+      methods: 'GET, OPTIONS',
+      defaultAllowHeaders: 'content-type',
+      includePreflight: true
+    });
+    sendNoContent(res, 204, {
+      ...preflightCorsHeaders,
+      allow: 'GET, OPTIONS',
+      'cache-control': 'no-store'
+    });
+    return;
+  }
+
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { error: 'Method Not Allowed' }, {
+      ...corsHeaders,
+      allow: 'GET, OPTIONS',
+      'cache-control': 'no-store'
+    });
+    return;
+  }
+
+  sendJson(res, 200, {
+    ok: true,
+    adminEmails: ADMIN_EMAIL_ALLOWLIST
+  }, {
+    ...corsHeaders,
+    'cache-control': 'no-store'
+  });
+}
+
 async function routeRequest(req, res) {
   const rawRequestTarget = String(req.url || '/');
   const querySeparatorIndex = rawRequestTarget.indexOf('?');
@@ -1230,8 +1311,24 @@ async function routeRequest(req, res) {
     return;
   }
 
+  const requestHost = getRequestHost(req);
+  if ((req.method === 'GET' || req.method === 'HEAD')
+    && isMaintenancePath(url.pathname)
+    && requestHost
+    && requestHost !== ADMIN_HOSTNAME
+    && PRIMARY_SITE_HOSTNAMES.has(requestHost)) {
+    sendRedirect(res, buildAdminMaintenanceRedirectLocation(rawRequestTarget), 308, {
+      'cache-control': 'no-store'
+    });
+    return;
+  }
+
   if (rawPathname === '/api/anilist') {
     await handleAniListProxy(req, res);
+    return;
+  }
+  if (rawPathname === '/api/admin/config') {
+    await handleAdminConfig(req, res);
     return;
   }
   if (rawPathname === '/api/health/check') {

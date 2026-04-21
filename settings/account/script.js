@@ -90,6 +90,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const deletePassword = document.getElementById('deletePassword');
   const deleteAccountBtn = document.getElementById('deleteAccountBtn');
+  const resetDataBtn = document.getElementById('resetDataBtn');
+  const resetStatusText = document.getElementById('resetStatusText');
   const signOutBtn = document.getElementById('signOutBtn');
   const clearOnLogoutToggle = document.getElementById('clearOnLogoutToggle');
   const syncToggle = document.getElementById('syncToggle');
@@ -1115,6 +1117,46 @@ document.addEventListener('DOMContentLoaded', () => {
     await window.bilmAuth.init();
   }
 
+  async function runWithMutationSuppression(task) {
+    if (window.bilmAuth?.withMutationSuppressed) {
+      return window.bilmAuth.withMutationSuppressed(task);
+    }
+    return task();
+  }
+
+  async function clearAllLocalData() {
+    await runWithMutationSuppression(async () => {
+      localStorage.clear();
+      sessionStorage.clear();
+
+      document.cookie.split(';').forEach((cookie) => {
+        const eqPos = cookie.indexOf('=');
+        const name = eqPos > -1 ? cookie.slice(0, eqPos).trim() : cookie.trim();
+        if (!name) return;
+        document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+      });
+
+      if (window.indexedDB?.databases) {
+        const databases = await window.indexedDB.databases();
+        await Promise.all((databases || []).map((db) => new Promise((resolve) => {
+          if (!db.name) {
+            resolve();
+            return;
+          }
+          const request = window.indexedDB.deleteDatabase(db.name);
+          request.onsuccess = () => resolve();
+          request.onerror = () => resolve();
+          request.onblocked = () => resolve();
+        })));
+      }
+
+      if (window.caches?.keys) {
+        const cacheKeys = await window.caches.keys();
+        await Promise.all(cacheKeys.map((cacheKey) => window.caches.delete(cacheKey)));
+      }
+    });
+  }
+
   async function saveCredentialsForAutofill(email, password) {
     if (!('credentials' in navigator) || !window.PasswordCredential) return;
     try {
@@ -1159,6 +1201,11 @@ document.addEventListener('DOMContentLoaded', () => {
       if (accountLinkActiveCard) accountLinkActiveCard.hidden = true;
       if (accountLinkPendingCard) accountLinkPendingCard.hidden = true;
       if (accountLinkIncomingCard) accountLinkIncomingCard.hidden = true;
+    }
+    if (resetStatusText) {
+      resetStatusText.textContent = loggedIn
+        ? 'Clears local data and your account cloud data.'
+        : 'Clears local data. Log in to wipe cloud data too.';
     }
   }
 
@@ -1555,6 +1602,75 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  resetDataBtn?.addEventListener('click', async () => {
+    let authApi = null;
+    let currentUser = null;
+    try {
+      await ensureAuthReady();
+      authApi = window.bilmAuth;
+      currentUser = authApi?.getCurrentUser?.() || null;
+    } catch {
+      authApi = window.bilmAuth || null;
+      currentUser = authApi?.getCurrentUser?.() || null;
+    }
+
+    const canResetCloudAccount = Boolean(currentUser && typeof authApi?.resetAccountData === 'function');
+    if (!currentUser) {
+      const openLogin = confirm('Not logged in. Log in to wipe cloud data too?');
+      if (openLogin) {
+        openSharedAuthModal('login');
+      }
+    }
+
+    if (currentUser && !canResetCloudAccount) {
+      const unavailable = 'Reset unavailable.';
+      if (resetStatusText) resetStatusText.textContent = unavailable;
+      statusText.textContent = unavailable;
+      showToast(unavailable, 'error');
+      return;
+    }
+
+    const confirmReset = confirm(
+      canResetCloudAccount
+        ? 'Reset account and local data?'
+        : 'Reset local data on this device?'
+    );
+    if (!confirmReset) return;
+
+    const typedConfirmation = prompt('Type RESET to confirm.');
+    if (typedConfirmation?.trim().toUpperCase() !== 'RESET') {
+      const canceled = 'Reset canceled.';
+      if (resetStatusText) resetStatusText.textContent = canceled;
+      statusText.textContent = canceled;
+      return;
+    }
+
+    if (resetDataBtn) resetDataBtn.disabled = true;
+    try {
+      if (canResetCloudAccount) {
+        if (resetStatusText) resetStatusText.textContent = 'Resetting account...';
+        await authApi.resetAccountData();
+      } else if (resetStatusText) {
+        resetStatusText.textContent = 'Resetting local data...';
+      }
+
+      await clearAllLocalData();
+      const doneMessage = canResetCloudAccount ? 'Account reset complete. Reloading...' : 'Local reset complete. Reloading...';
+      if (resetStatusText) resetStatusText.textContent = doneMessage;
+      statusText.textContent = doneMessage;
+      showToast(canResetCloudAccount ? 'Account reset complete.' : 'Local reset complete.', 'success');
+      setTimeout(() => location.reload(), 250);
+    } catch (error) {
+      console.error('Account settings reset failed:', error);
+      const failedMessage = 'Reset failed.';
+      if (resetStatusText) resetStatusText.textContent = failedMessage;
+      statusText.textContent = failedMessage;
+      showToast('Reset failed.', 'error');
+    } finally {
+      if (resetDataBtn) resetDataBtn.disabled = false;
+    }
+  });
+
   deleteAccountBtn?.addEventListener('click', async () => {
     try {
       await ensureAuthReady();
@@ -1588,8 +1704,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       await window.bilmAuth.signOut();
       if (getClearOnLogoutSetting()) {
-        localStorage.clear();
-        sessionStorage.clear();
+        await clearAllLocalData();
       }
       transferStatusText.textContent = 'Signed out successfully.';
       statusText.textContent = getClearOnLogoutSetting() ? 'Signed out and cleared local data.' : 'Signed out without clearing local data.';

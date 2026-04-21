@@ -36,6 +36,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const resetThemeBtn = document.getElementById('resetThemeBtn');
   const resetDataBtn = document.getElementById('resetDataBtn');
   const resetStatusText = document.getElementById('resetStatusText');
+  const maintenanceGatePanel = document.getElementById('maintenanceGatePanel');
+  const maintenanceGateTitle = document.getElementById('maintenanceGateTitle');
+  const maintenanceGateMessage = document.getElementById('maintenanceGateMessage');
+  const maintenanceGateActions = document.getElementById('maintenanceGateActions');
+  const maintenanceLoginBtn = document.getElementById('maintenanceLoginBtn');
+  const maintenanceSignUpBtn = document.getElementById('maintenanceSignUpBtn');
+  const maintenanceAdminContent = document.getElementById('maintenanceAdminContent');
   const restoreMigrationBtn = document.getElementById('restoreMigrationBtn');
   const clearMigrationBtn = document.getElementById('clearMigrationBtn');
   const migrationRecoveryCount = document.getElementById('migrationRecoveryCount');
@@ -51,6 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const DEBUG_ISSUE_LOCAL_KEY = 'debug-local-issue';
   const MIGRATION_QUARANTINE_KEY = 'bilm-media-identity-quarantine-v1';
   const MIGRATION_QUARANTINE_META_KEY = 'bilm-media-identity-quarantine-meta-v1';
+  const ACCOUNT_SETTINGS_PATH = withBase('/settings/account/');
   const HEALTH_CHECK_SAMPLE_USER_ID = '12345678901234567890123456';
   const HEALTH_CHECK_TARGETS = [
     { label: 'Storage API', url: 'https://storage-api.watchbilm.org/media/tmdb/configuration' },
@@ -114,9 +122,118 @@ document.addEventListener('DOMContentLoaded', () => {
     { label: 'VidKing', url: 'https://www.vidking.net' },
     { label: 'VidNest', url: 'https://vidnest.fun' }
   ];
+  let maintenanceAccessGranted = false;
+  let maintenanceDeniedRedirectScheduled = false;
 
   function showToast(message, tone = 'info', duration = 1000) {
     window.bilmToast?.show?.(message, { tone, duration });
+  }
+
+  function openSharedAuthModal(mode = 'login') {
+    const normalizedMode = mode === 'signup' ? 'signup' : 'login';
+    const openFn = window.bilmAuthUi?.open;
+    if (typeof openFn === 'function') {
+      openFn(normalizedMode);
+      return;
+    }
+
+    window.addEventListener('bilm:auth-modal-ready', () => {
+      window.bilmAuthUi?.open?.(normalizedMode);
+    }, { once: true });
+
+    window.dispatchEvent(new CustomEvent('bilm:open-auth-modal', {
+      detail: { mode: normalizedMode }
+    }));
+  }
+
+  function setMaintenanceGateState(state = 'checking', {
+    title = 'Checking Access',
+    message = 'Verifying your account access...',
+    showActions = false
+  } = {}) {
+    if (maintenanceGatePanel) {
+      maintenanceGatePanel.hidden = false;
+      maintenanceGatePanel.setAttribute('data-state', state);
+    }
+    if (maintenanceGateTitle) maintenanceGateTitle.textContent = title;
+    if (maintenanceGateMessage) maintenanceGateMessage.textContent = message;
+    if (maintenanceGateActions) maintenanceGateActions.hidden = !showActions;
+  }
+
+  function setMaintenanceContentVisible(visible) {
+    if (maintenanceAdminContent) maintenanceAdminContent.hidden = !visible;
+  }
+
+  function resolveIsAdmin(email) {
+    const normalized = String(email || '').trim().toLowerCase();
+    if (!normalized) return Promise.resolve(false);
+    if (window.bilmAdmin?.isAdminEmail) {
+      return window.bilmAdmin.isAdminEmail(normalized).catch((error) => {
+        console.warn('Maintenance admin lookup failed:', error);
+        return window.bilmAdmin?.isAdminEmailLocal?.(normalized) === true;
+      });
+    }
+    return Promise.resolve(normalized === 'watchbilm@gmail.com');
+  }
+
+  function requireMaintenanceAccess() {
+    if (maintenanceAccessGranted) return true;
+    showToast('Admin access required.', 'error');
+    return false;
+  }
+
+  async function evaluateMaintenanceAccess({ redirectOnDenied = true } = {}) {
+    maintenanceAccessGranted = false;
+    setMaintenanceContentVisible(false);
+    setMaintenanceGateState('checking', {
+      title: 'Checking Access',
+      message: 'Verifying your account access...',
+      showActions: false
+    });
+
+    try {
+      await ensureAuthReady();
+    } catch (error) {
+      console.warn('Maintenance auth init failed:', error);
+      setMaintenanceGateState('denied', {
+        title: 'Log In Required',
+        message: 'Log in to continue.',
+        showActions: true
+      });
+      return false;
+    }
+
+    const user = window.bilmAuth?.getCurrentUser?.() || null;
+    if (!user?.email) {
+      setMaintenanceGateState('denied', {
+        title: 'Log In Required',
+        message: 'Log in to continue.',
+        showActions: true
+      });
+      return false;
+    }
+
+    const isAdmin = await resolveIsAdmin(user.email);
+    if (!isAdmin) {
+      setMaintenanceGateState('denied', {
+        title: 'Admin Only',
+        message: 'You do not have maintenance access. Redirecting...',
+        showActions: true
+      });
+      if (redirectOnDenied && !maintenanceDeniedRedirectScheduled) {
+        maintenanceDeniedRedirectScheduled = true;
+        window.setTimeout(() => {
+          window.location.href = ACCOUNT_SETTINGS_PATH;
+        }, 1200);
+      }
+      return false;
+    }
+
+    maintenanceAccessGranted = true;
+    maintenanceDeniedRedirectScheduled = false;
+    if (maintenanceGatePanel) maintenanceGatePanel.hidden = true;
+    setMaintenanceContentVisible(true);
+    return true;
   }
 
   function formatSyncTimestamp(atMs) {
@@ -426,6 +543,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function runConnectionHealthChecks() {
+    if (!requireMaintenanceAccess()) return;
     if (!runHealthCheckBtn || !healthCheckStatus) return;
     runHealthCheckBtn.disabled = true;
     healthCheckStatus.textContent = 'Running checks...';
@@ -467,7 +585,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  maintenanceLoginBtn?.addEventListener('click', () => {
+    openSharedAuthModal('login');
+  });
+
+  maintenanceSignUpBtn?.addEventListener('click', () => {
+    openSharedAuthModal('signup');
+  });
+
   resetThemeBtn?.addEventListener('click', () => {
+    if (!requireMaintenanceAccess()) return;
     if (!confirm('Reset theme to default settings?')) return;
     window.bilmTheme?.resetTheme?.();
     resetStatusText.textContent = 'Theme reset complete.';
@@ -475,6 +602,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   resetDataBtn?.addEventListener('click', async () => {
+    if (!requireMaintenanceAccess()) return;
     let authApi = null;
     let currentUser = null;
     try {
@@ -528,10 +656,12 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   restoreMigrationBtn?.addEventListener('click', () => {
+    if (!requireMaintenanceAccess()) return;
     restoreMigrationQuarantine();
   });
 
   clearMigrationBtn?.addEventListener('click', () => {
+    if (!requireMaintenanceAccess()) return;
     if (!confirm('Clear all quarantined migration entries?')) return;
     clearMigrationQuarantine();
   });
@@ -541,6 +671,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   clearSyncDebugBtn?.addEventListener('click', () => {
+    if (!requireMaintenanceAccess()) return;
     resetSyncDebugPanel();
   });
 
@@ -554,11 +685,27 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   (async () => {
-    updateMigrationRecoveryUi();
     restoreDebugIssuePanel();
     renderHealthResults([]);
+    const hasAccess = await evaluateMaintenanceAccess({ redirectOnDenied: true });
+    if (!hasAccess) {
+      try {
+        await ensureAuthReady();
+        window.bilmAuth?.onAuthStateChanged?.(() => {
+          void evaluateMaintenanceAccess({ redirectOnDenied: true });
+        });
+      } catch {
+        // Ignore auth-listener setup failure.
+      }
+      return;
+    }
+
+    updateMigrationRecoveryUi();
     try {
       await ensureAuthReady();
+      window.bilmAuth?.onAuthStateChanged?.(() => {
+        void evaluateMaintenanceAccess({ redirectOnDenied: true });
+      });
       window.bilmAuth?.onSyncIssue?.((issue) => {
         renderDebugIssue({
           ...issue,

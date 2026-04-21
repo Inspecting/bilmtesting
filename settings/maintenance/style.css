@@ -5,6 +5,14 @@
   gap: 12px;
 }
 
+#maintenanceGatePanel[data-state="denied"] {
+  border-color: color-mix(in srgb, #ef4444 55%, var(--border));
+}
+
+#maintenanceGatePanel[data-state="allowed"] {
+  border-color: color-mix(in srgb, #22c55e 45%, var(--border));
+}
+
 .health-scroll {
   margin-top: 10px;
   border: 1px solid var(--border);
