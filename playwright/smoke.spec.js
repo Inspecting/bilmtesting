@@ -1413,7 +1413,7 @@ test('proxied mode replaces loading page for logged-in users', async ({ page }) 
   await setThemeSettings(page, { proxied: true, loading: false });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   await expect(page.locator('#bilmProxyShell')).toBeVisible();
-  await expect(page.locator('#bilmProxyFrame')).toHaveAttribute('src', /https:\/\/bilm-scramjet\.fly\.dev\//);
+  await expect(page.locator('#bilmProxyFrame')).toHaveAttribute('src', /https:\/\/proxy\.watchbilm\.org\//);
   await expect(page.locator('#bilmProxyErrorPanel')).toBeHidden();
   expect(page.url()).not.toMatch(/\/home\/?$/);
 });

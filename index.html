@@ -220,7 +220,7 @@
     async function tryActivateProxyMode() {
       try {
         const proxiedActive = await window.bilmProxyGate?.activateProxiedMode?.({
-          targetUrl: 'https://bilm-scramjet.fly.dev/',
+          targetUrl: 'https://proxy.watchbilm.org/',
           timeoutMs: 7000
         });
         if (proxiedActive) {

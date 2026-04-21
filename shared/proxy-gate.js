@@ -1,5 +1,5 @@
 (() => {
-  const DEFAULT_PROXY_URL = 'https://bilm-scramjet.fly.dev/';
+  const DEFAULT_PROXY_URL = 'https://proxy.watchbilm.org/';
   const SHELL_ID = 'bilmProxyShell';
   const SHELL_STYLE_ID = 'bilmProxyShellStyle';
   const AUTH_HINT_KEY = 'bilm-auth-last-known';

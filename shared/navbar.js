@@ -229,7 +229,7 @@ async function maybeActivateProxiedMode() {
     const proxyGate = await loadProxyGateScript();
     if (!proxyGate?.activateProxiedMode) return false;
     return await proxyGate.activateProxiedMode({
-      targetUrl: 'https://bilm-scramjet.fly.dev/',
+      targetUrl: 'https://proxy.watchbilm.org/',
       timeoutMs: 7000
     });
   } catch {

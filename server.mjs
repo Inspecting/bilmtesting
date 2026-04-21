@@ -7,9 +7,7 @@ const rootDir = path.resolve(process.cwd());
 const port = Number(process.env.PORT || 8080);
 const STATIC_CACHE_CONTROL = 'public, max-age=300, stale-while-revalidate=86400';
 const ADMIN_HOSTNAME = 'admin.watchbilm.org';
-const PRIMARY_SITE_HOSTNAME = 'watchbilm.org';
-const LEGACY_FLY_HOSTNAME = 'bilm.fly.dev';
-const PRIMARY_SITE_HOSTNAMES = new Set([PRIMARY_SITE_HOSTNAME, 'www.watchbilm.org']);
+const PRIMARY_SITE_HOSTNAMES = new Set(['watchbilm.org', 'www.watchbilm.org']);
 const DEFAULT_ADMIN_EMAILS = Object.freeze(['watchbilm@gmail.com']);
 const DEFAULT_HEALTH_CHECK_ALLOWED_HOSTS = new Set([
   'storage-api.watchbilm.org',
@@ -196,9 +194,6 @@ function normalizeClientIp(rawValue) {
 }
 
 function getClientIp(req) {
-  const flyClientIp = normalizeClientIp(req.headers['fly-client-ip']);
-  if (flyClientIp) return flyClientIp;
-
   const realIp = normalizeClientIp(req.headers['x-real-ip']);
   if (realIp) return realIp;
 
@@ -251,11 +246,6 @@ function isMaintenancePath(pathname) {
 function buildAdminMaintenanceRedirectLocation(rawRequestTarget) {
   const normalizedTarget = String(rawRequestTarget || '/settings/maintenance/').trim() || '/settings/maintenance/';
   return `https://${ADMIN_HOSTNAME}${normalizedTarget.startsWith('/') ? normalizedTarget : `/${normalizedTarget}`}`;
-}
-
-function buildPrimarySiteRedirectLocation(rawRequestTarget) {
-  const normalizedTarget = String(rawRequestTarget || '/').trim() || '/';
-  return `https://${PRIMARY_SITE_HOSTNAME}${normalizedTarget.startsWith('/') ? normalizedTarget : `/${normalizedTarget}`}`;
 }
 
 function appendVary(existingValue, nextValue) {
@@ -1318,13 +1308,6 @@ async function routeRequest(req, res) {
   }
 
   const requestHost = getRequestHost(req);
-  if (requestHost === LEGACY_FLY_HOSTNAME) {
-    sendRedirect(res, buildPrimarySiteRedirectLocation(rawRequestTarget), 308, {
-      'cache-control': 'no-store'
-    });
-    return;
-  }
-
   if ((req.method === 'GET' || req.method === 'HEAD')
     && isMaintenancePath(url.pathname)
     && requestHost
