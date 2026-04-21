@@ -1068,7 +1068,7 @@
   }
 
   function getMaintenanceUrl() {
-    return 'https://admin.watchbilm.org/settings/maintenance/';
+    return '../settings/maintenance/';
   }
 
   function updatePresetVisuals() {
@@ -1663,16 +1663,7 @@
     try {
       await ensureAuthReady();
       if (!confirm('Log out of your account?')) return;
-      if (confirm('Do you want to export your data before logging out?')) {
-        const backupJson = formatBackup(collectBackupData());
-        openDataModal({
-          title: 'Export Backup Data',
-          message: 'Copy this backup JSON data before signing out.',
-          code: backupJson
-        });
-        cloudStatus.textContent = 'Export opened. Log out again after saving your backup.';
-        return;
-      }
+      cloudStatus.textContent = 'Syncing before log out...';
       await window.bilmAuth.signOut();
       const clearOnLogout = localStorage.getItem(CLEAR_ON_LOGOUT_KEY) !== '0';
       if (clearOnLogout) {

@@ -1310,8 +1310,15 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!activeLink?.id) return;
       if (!confirm(`Unlink account ${activeLink?.partner?.email || ''}?`)) return;
       unlinkAccountBtn.disabled = true;
-      await window.bilmAuth.unlinkAccountLink(activeLink.id);
-      showToast('Account unlinked.', 'success');
+      const unlinkResult = await window.bilmAuth.unlinkAccountLink(activeLink.id);
+      const duplicatedItems = Number(unlinkResult?.retainedSharedData?.duplicatedItems || 0) || 0;
+      if (duplicatedItems > 0) {
+        statusText.textContent = `Account unlinked. Kept ${duplicatedItems} shared item${duplicatedItems === 1 ? '' : 's'}.`;
+        showToast('Account unlinked. Shared data kept.', 'success');
+      } else {
+        statusText.textContent = 'Account unlinked.';
+        showToast('Account unlinked.', 'success');
+      }
       await refreshAccountLinkState({ silent: true });
     } catch (error) {
       statusText.textContent = `Unlink failed: ${error.message}`;
@@ -1691,17 +1698,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       await ensureAuthReady();
       if (!confirm('Sign out of your account?')) return;
-      if (confirm('Do you want to export your data before logging out?')) {
-        const payload = collectBackupData();
-        openDataModal({
-          title: 'Export Backup Data',
-          message: 'Copy this backup JSON data before signing out.',
-          code: formatBackup(payload),
-          importMode: false
-        });
-        transferStatusText.textContent = 'Export opened. Sign out again after saving your code.';
-        return;
-      }
+      statusText.textContent = 'Syncing before sign out...';
       await window.bilmAuth.signOut();
       if (getClearOnLogoutSetting()) {
         await clearAllLocalData();

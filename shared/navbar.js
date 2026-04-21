@@ -673,6 +673,7 @@ function loadToastScript() {
         return;
       }
       try {
+        showToast('Syncing before sign out...', 'info', 0);
         await authApiInstance.signOut?.();
         closeAccountMenu();
         showToast('Signed out.', 'success');

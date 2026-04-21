@@ -2898,6 +2898,118 @@
     }
   }
 
+  function stripLinkedShareMetadataFromListItem(item = {}) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    const next = { ...item };
+    delete next.linkedShare;
+    delete next.linkedShareItemKey;
+    delete next.linkedShareSourceEmail;
+    delete next.linkedShareUpdatedAtMs;
+    return next;
+  }
+
+  function materializeLinkedShareCacheToLocalLists() {
+    const cache = readLinkedShareCache();
+    const lists = cache?.lists && typeof cache.lists === 'object' && !Array.isArray(cache.lists)
+      ? cache.lists
+      : {};
+    const changedListKeys = new Set();
+    let duplicatedItems = 0;
+    let hadLinkedRecords = false;
+
+    MERGEABLE_LIST_KEYS.forEach((listKey) => {
+      const linkedRecords = lists[listKey];
+      if (!linkedRecords || typeof linkedRecords !== 'object' || Array.isArray(linkedRecords)) return;
+
+      const linkedEntries = Object.entries(linkedRecords)
+        .filter(([, record]) => record && typeof record === 'object' && !Array.isArray(record));
+      if (!linkedEntries.length) return;
+      hadLinkedRecords = true;
+
+      const byKey = new Map();
+      readJsonArray(localStorage.getItem(listKey)).forEach((entry) => {
+        const itemKey = getListItemKeyForList(listKey, entry);
+        if (!itemKey) return;
+        const existing = byKey.get(itemKey);
+        if (!existing || getItemUpdatedAt(entry) >= getItemUpdatedAt(existing)) {
+          byKey.set(itemKey, entry);
+        }
+      });
+
+      let listChanged = false;
+      linkedEntries.forEach(([fallbackItemKey, record]) => {
+        const payload = record?.payload;
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
+        const nextItem = stripLinkedShareMetadataFromListItem(payload);
+        if (!nextItem) return;
+
+        const recordUpdatedAtMs = normalizeOperationUpdatedAt(record?.updatedAtMs, 0, {
+          context: 'linked-share-materialize'
+        });
+        const candidateUpdatedAtMs = Math.max(
+          getItemUpdatedAt(nextItem),
+          recordUpdatedAtMs
+        );
+        if (candidateUpdatedAtMs > 0 && getItemUpdatedAt(nextItem) <= 0) {
+          nextItem.updatedAt = candidateUpdatedAtMs;
+        }
+
+        const itemKey = getListItemKeyForList(listKey, nextItem)
+          || String(record?.itemKey || fallbackItemKey || '').trim();
+        if (!itemKey) return;
+
+        const existing = byKey.get(itemKey);
+        const existingUpdatedAtMs = normalizeOperationUpdatedAt(getItemUpdatedAt(existing), 0, {
+          context: 'linked-share-materialize-existing'
+        });
+        if (existing && existingUpdatedAtMs > candidateUpdatedAtMs) return;
+
+        byKey.set(itemKey, nextItem);
+        duplicatedItems += 1;
+        listChanged = true;
+      });
+
+      if (!listChanged) return;
+      const maxItems = Number(LIST_MAX_ITEMS_BY_KEY[listKey] || DEFAULT_LIST_MAX_ITEMS) || DEFAULT_LIST_MAX_ITEMS;
+      const nextList = [...byKey.values()]
+        .sort((left, right) => getItemUpdatedAt(right) - getItemUpdatedAt(left))
+        .slice(0, maxItems);
+      localStorage.setItem(listKey, JSON.stringify(nextList));
+      changedListKeys.add(listKey);
+    });
+
+    const listKeys = [...changedListKeys];
+    if (listKeys.length > 0) {
+      const atMs = Date.now();
+      emitListSyncApplied({
+        listKeys,
+        atMs
+      });
+      emitSyncAppliedEvent({
+        source: 'linked-share-materialized',
+        atMs,
+        listKeys
+      });
+      try {
+        window.dispatchEvent(new CustomEvent('bilm:linked-share-updated', {
+          detail: {
+            atMs,
+            listKeys
+          }
+        }));
+      } catch (error) {
+        console.warn('Linked-share materialize event failed:', error);
+      }
+    }
+
+    return {
+      applied: listKeys.length > 0,
+      hadLinkedRecords,
+      duplicatedItems,
+      listKeys
+    };
+  }
+
   function clearLinkedShareCache({ listKeys = [...MERGEABLE_LIST_KEYS] } = {}) {
     withMutationSuppressed(() => {
       localStorage.removeItem(LINKED_SHARE_CACHE_KEY);
@@ -4339,8 +4451,26 @@
         firebaseMirrorCleared
       };
     },
-    async signOut() {
+    async signOut(options = {}) {
       await init();
+      const user = auth?.currentUser || currentUser;
+      const syncBeforeSignOut = options?.syncBeforeSignOut !== false;
+      if (syncBeforeSignOut && user && isSyncEnabled() && !isIncognitoSyncPaused()) {
+        try {
+          await flushPendingListOperationsToCloud('signout-prep');
+          await syncListsFromCloudNow();
+          await api.saveCloudSnapshot(collectBackupData(), {
+            mirrorToFirebase: true,
+            mirrorReason: 'signout'
+          });
+        } catch (error) {
+          const wrapped = new Error('Sync before sign out failed. Try again.');
+          wrapped.code = 'signout_sync_failed';
+          wrapped.retryable = true;
+          wrapped.cause = error;
+          throw wrapped;
+        }
+      }
       return modules.signOut(auth);
     },
     getCurrentUser() {
@@ -4676,11 +4806,39 @@
         throw new Error('Account link id is required.');
       }
       const { user, userId } = await requireAccountLinkSession();
+      try {
+        await syncLinkedSharedFeedNow(user, userId, {
+          maxPages: 16,
+          limit: 500
+        });
+      } catch (error) {
+        console.warn('Pre-unlink linked-share sync failed:', error);
+      }
       const payload = await unlinkAccountLinkInTransferApi(user, userId, { linkId: normalizedLinkId });
+      const retainedSharedData = materializeLinkedShareCacheToLocalLists();
       resetLinkedShareCursor(user);
       setLinkedShareLinkSignature('', user);
       clearLinkedShareCache();
-      return payload && typeof payload === 'object' ? payload : { ok: true };
+      if (retainedSharedData.applied) {
+        try {
+          await flushPendingListOperationsToCloud('account-link-unlink-retain');
+        } catch (error) {
+          console.warn('Post-unlink retained-data flush failed:', error);
+        }
+        try {
+          await api.saveCloudSnapshot(collectBackupData(), {
+            mirrorToFirebase: true,
+            mirrorReason: 'account-link-unlink'
+          });
+        } catch (error) {
+          console.warn('Post-unlink retained-data snapshot save failed:', error);
+        }
+      }
+      const normalizedPayload = payload && typeof payload === 'object' ? payload : { ok: true };
+      return {
+        ...normalizedPayload,
+        retainedSharedData
+      };
     },
     getFirebaseBackupStatus() {
       return getFirebaseBackupStatus();

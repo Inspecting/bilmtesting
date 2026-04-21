@@ -6,8 +6,6 @@ import path from 'node:path';
 const rootDir = path.resolve(process.cwd());
 const port = Number(process.env.PORT || 8080);
 const STATIC_CACHE_CONTROL = 'public, max-age=300, stale-while-revalidate=86400';
-const ADMIN_HOSTNAME = 'admin.watchbilm.org';
-const PRIMARY_SITE_HOSTNAMES = new Set(['watchbilm.org', 'www.watchbilm.org']);
 const DEFAULT_ADMIN_EMAILS = Object.freeze(['watchbilm@gmail.com']);
 const DEFAULT_HEALTH_CHECK_ALLOWED_HOSTS = new Set([
   'storage-api.watchbilm.org',
@@ -222,30 +220,6 @@ function normalizeRequestOrigin(rawOrigin) {
   } catch {
     return '';
   }
-}
-
-function getRequestHost(req) {
-  const host = String(req?.headers?.host || '').trim().toLowerCase();
-  if (!host) return '';
-  const bracketIndex = host.indexOf(']');
-  if (host.startsWith('[') && bracketIndex >= 0) {
-    const portIndex = host.indexOf(':', bracketIndex);
-    return portIndex > -1 ? host.slice(0, portIndex) : host;
-  }
-  const firstColon = host.indexOf(':');
-  return firstColon > -1 ? host.slice(0, firstColon) : host;
-}
-
-function isMaintenancePath(pathname) {
-  const normalized = String(pathname || '').trim();
-  return normalized === '/settings/maintenance'
-    || normalized === '/settings/maintenance/'
-    || normalized.startsWith('/settings/maintenance/');
-}
-
-function buildAdminMaintenanceRedirectLocation(rawRequestTarget) {
-  const normalizedTarget = String(rawRequestTarget || '/settings/maintenance/').trim() || '/settings/maintenance/';
-  return `https://${ADMIN_HOSTNAME}${normalizedTarget.startsWith('/') ? normalizedTarget : `/${normalizedTarget}`}`;
 }
 
 function appendVary(existingValue, nextValue) {
@@ -1304,18 +1278,6 @@ async function routeRequest(req, res) {
     url = new URL(rawRequestTarget || '/', 'http://localhost');
   } catch {
     sendJson(res, 400, { error: 'Bad Request' }, { 'cache-control': 'no-store' });
-    return;
-  }
-
-  const requestHost = getRequestHost(req);
-  if ((req.method === 'GET' || req.method === 'HEAD')
-    && isMaintenancePath(url.pathname)
-    && requestHost
-    && requestHost !== ADMIN_HOSTNAME
-    && PRIMARY_SITE_HOSTNAMES.has(requestHost)) {
-    sendRedirect(res, buildAdminMaintenanceRedirectLocation(rawRequestTarget), 308, {
-      'cache-control': 'no-store'
-    });
     return;
   }
 
