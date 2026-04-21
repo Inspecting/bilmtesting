@@ -690,16 +690,6 @@
           <option value="vidnest">Vidnest</option>
         </select>
       </div>
-      <div class="control-row" id="proxiedControlRow">
-        <div>
-          <label>Proxied</label>
-          <small id="proxiedControlHint">Load Bilm in embedded proxy mode using your account setting.</small>
-        </div>
-        <label class="toggle">
-          <input id="proxiedToggle" type="checkbox" />
-          <span></span>
-        </label>
-      </div>
     </section>
 
     <section class="settings-card">
@@ -845,9 +835,6 @@
   const incognitoToggle = document.getElementById('incognitoToggle');
   const serverSelect = document.getElementById('serverSelect');
   const animeServerSelect = document.getElementById('animeServerSelect');
-  const proxiedControlRow = document.getElementById('proxiedControlRow');
-  const proxiedControlHint = document.getElementById('proxiedControlHint');
-  const proxiedToggle = document.getElementById('proxiedToggle');
   const maintenanceHubLink = document.getElementById('maintenanceHubLink');
   const maintenanceCard = document.getElementById('maintenanceCard');
   const openMaintenanceBtn = document.getElementById('openMaintenanceBtn');
@@ -1049,20 +1036,6 @@
     window.bilmTheme?.setSettings?.({ ...current, ...partial });
   }
 
-  function updateProxiedControl(user) {
-    const loggedIn = Boolean(user);
-    proxiedControlRow?.classList.toggle('is-disabled', !loggedIn);
-    if (proxiedControlHint) {
-      proxiedControlHint.textContent = loggedIn
-        ? 'Load Bilm in embedded proxy mode using your account setting.'
-        : 'Sign in to enable embedded proxy mode.';
-    }
-    if (proxiedToggle) {
-      proxiedToggle.disabled = !loggedIn;
-      proxiedToggle.setAttribute('aria-disabled', loggedIn ? 'false' : 'true');
-    }
-  }
-
   function applyMaintenanceVisibility(isAdmin) {
     const allowed = Boolean(isAdmin);
     if (maintenanceHubLink) maintenanceHubLink.hidden = !allowed;
@@ -1141,7 +1114,6 @@
     serverSelect.value = supportedServers.includes(preferredServer) ? preferredServer : 'embedmaster';
     const preferredAnimeServer = settings.animeDefaultServer || 'vidnest';
     animeServerSelect.value = preferredAnimeServer === 'vidnest' ? 'vidnest' : 'vidnest';
-    proxiedToggle.checked = settings.proxied === true;
     updatePresetVisuals();
   }
 
@@ -1400,7 +1372,6 @@
       openSignUpBtn.hidden = true;
       logoutBtn.hidden = false;
       openAccountSettingsBtn.disabled = false;
-      updateProxiedControl(user);
       cloudStatus.textContent = isSyncEnabled()
         ? 'Account ready. Live sync is active on this device.'
         : 'Account ready. Live sync is paused on this device.';
@@ -1411,7 +1382,6 @@
       openSignUpBtn.hidden = false;
       logoutBtn.hidden = true;
       openAccountSettingsBtn.disabled = false;
-      updateProxiedControl(null);
       cloudStatus.textContent = 'Log in to use account features.';
       applyMaintenanceVisibility(false);
     }
@@ -1536,15 +1506,6 @@
 
   animeServerSelect.addEventListener('change', (event) => {
     applySettings({ animeDefaultServer: event.target.value });
-  });
-
-  proxiedToggle?.addEventListener('change', (event) => {
-    const user = window.bilmAuth?.getCurrentUser?.();
-    if (!user) {
-      event.target.checked = false;
-      return;
-    }
-    applySettings({ proxied: event.target.checked });
   });
 
   exportDataBtn?.addEventListener('click', () => {
@@ -1833,7 +1794,6 @@
       accountStatusText.textContent = 'Account tools are unavailable right now. Refresh and try again.';
       cloudStatus.textContent = `Auth setup failed: ${err.message}`;
       openAccountSettingsBtn.disabled = false;
-      updateProxiedControl(null);
       applyMaintenanceVisibility(false);
     }
   }

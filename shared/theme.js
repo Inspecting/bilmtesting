@@ -65,7 +65,6 @@ function withBase(path) {
     motion: true,
     particles: true,
     loading: true,
-    proxied: false,
     defaultServer: 'embedmaster',
     animeDefaultServer: 'vidnest',
     searchHistory: true,

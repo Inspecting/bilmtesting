@@ -1408,57 +1408,11 @@ test('non-admin is blocked from maintenance route', async ({ page }) => {
   await expect(page).toHaveURL(/\/settings\/account\/?$/);
 });
 
-test('proxied mode replaces loading page for logged-in users', async ({ page }) => {
-  await mockAuthScript(page, { loggedIn: true, email: 'proxy@watchbilm.org' });
-  await setThemeSettings(page, { proxied: true, loading: false });
-  await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await expect(page.locator('#bilmProxyShell')).toBeVisible();
-  await expect(page.locator('#bilmProxyFrame')).toHaveAttribute('src', /https:\/\/proxy\.watchbilm\.org\//);
-  await expect(page.locator('#bilmProxyErrorPanel')).toBeHidden();
-  expect(page.url()).not.toMatch(/\/home\/?$/);
-});
-
-test('proxied mode replaces navbar routes for logged-in users', async ({ page }) => {
-  await mockAuthScript(page, { loggedIn: true, email: 'proxy@watchbilm.org' });
-  await setThemeSettings(page, { proxied: true });
-  await page.goto('/home/', { waitUntil: 'domcontentloaded' });
-  await expect(page.locator('#bilmProxyShell')).toBeVisible();
-  await expect(page.locator('#bilmProxyExitBtn')).toBeVisible();
-});
-
-test('guests ignore proxied mode and loading off still redirects home', async ({ page }) => {
+test('loading off redirects home immediately', async ({ page }) => {
   await mockAuthScript(page, { loggedIn: false });
-  await setThemeSettings(page, { proxied: true, loading: false });
+  await setThemeSettings(page, { loading: false });
   await page.goto('/');
   await expect(page).toHaveURL(/\/home\/?$/);
-});
-
-test('settings shows proxied control immediately for guests in disabled state', async ({ page }) => {
-  await mockAuthScript(page, { loggedIn: false });
-  await setThemeSettings(page, { proxied: true });
-  await page.goto('/settings/');
-  await expect(page.locator('#proxiedControlRow')).toBeVisible();
-  await expect(page.locator('#proxiedToggle')).toBeDisabled();
-});
-
-test('settings shows proxied control for logged-in users and persists toggle', async ({ page }) => {
-  await mockAuthScript(page, { loggedIn: true, email: 'proxy@watchbilm.org' });
-  await setThemeSettings(page, { proxied: false });
-  await page.goto('/settings/');
-  const proxiedRow = page.locator('#proxiedControlRow');
-  const proxiedToggle = page.locator('#proxiedToggle');
-  const proxiedToggleHandle = page.locator('#proxiedControlRow .toggle span');
-
-  await expect(proxiedRow).toBeVisible();
-  await expect(proxiedToggle).not.toBeChecked();
-  await proxiedToggleHandle.click();
-  await expect(proxiedToggle).toBeChecked();
-
-  const storedProxied = await page.evaluate(() => {
-    const settings = JSON.parse(localStorage.getItem('bilm-theme-settings') || '{}');
-    return settings.proxied === true;
-  });
-  expect(storedProxied).toBe(true);
 });
 
 test('settings and account auth actions open shared navbar auth modal', async ({ page }) => {
