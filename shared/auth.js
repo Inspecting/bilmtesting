@@ -12,6 +12,7 @@
 
 
   const DATA_API_BASE = 'https://data-api.watchbilm.org';
+  const CHAT_API_BASE = 'https://chat-api.watchbilm.org';
   const LIST_SYNC_PUSH_PATH = '/sync/lists/push';
   const LIST_SYNC_PULL_PATH = '/sync/lists/pull';
   const SECTOR_SYNC_PUSH_PATH = '/sync/sectors/push';
@@ -24,6 +25,7 @@
   const ACCOUNT_LINK_SCOPES_PATH = '/links/scopes';
   const ACCOUNT_LINK_UNLINK_PATH = '/links/unlink';
   const ACCOUNT_LINK_SHARED_FEED_PATH = '/links/shared-feed';
+  const ACCOUNT_RESET_PATH = '/account/reset';
   const TRANSFER_API_DISABLE_KEY = 'bilm-transfer-api-disabled';
 
   let transferApiDisabled = false;
@@ -482,6 +484,67 @@
         limit: String(Math.max(1, Math.min(500, Number(limit || 250) || 250)))
       }
     });
+  }
+
+  async function resetAccountDataInTransferApi(user, userId) {
+    return await callAccountLinkApi(user, ACCOUNT_RESET_PATH, {
+      method: 'POST',
+      body: {
+        userId
+      }
+    });
+  }
+
+  async function resetAccountDataInChatApi(user) {
+    const authorization = await getTransferAuthHeader(user);
+    let response;
+    try {
+      response = await fetch(`${CHAT_API_BASE}${ACCOUNT_RESET_PATH}`, {
+        method: 'POST',
+        headers: {
+          accept: 'application/json,text/plain;q=0.9,*/*;q=0.8',
+          'content-type': 'application/json',
+          authorization
+        },
+        body: '{}'
+      });
+    } catch (error) {
+      if (shouldDisableTransferApi(error)) disableTransferApi('network/CORS failure on chat account reset');
+      throw error;
+    }
+
+    if (!response.ok) {
+      const parsedError = await parseTransferError(response, 'Chat API');
+      logTransferFailure('chat-account-reset', parsedError, { endpoint: ACCOUNT_RESET_PATH });
+      throw parsedError;
+    }
+
+    const raw = await response.text();
+    if (!raw.trim()) return {};
+    return safeParse(raw, {}) || {};
+  }
+
+  async function clearFirebaseBackupMirror(user) {
+    if (!user?.uid || !modules?.setDoc || !modules?.doc || !firestore) return false;
+    try {
+      const deleteField = typeof modules?.deleteField === 'function'
+        ? modules.deleteField
+        : null;
+      const payload = deleteField
+        ? {
+          cloudBackup: deleteField(),
+          syncHealth: deleteField()
+        }
+        : {
+          cloudBackup: null,
+          syncHealth: null
+        };
+      await modules.setDoc(modules.doc(firestore, 'users', user.uid), payload, { merge: true });
+      return true;
+    } catch (error) {
+      console.warn('Firebase backup mirror reset failed:', error);
+      return false;
+    }
   }
 
   const subscribers = new Set();
@@ -1086,13 +1149,14 @@
     };
   }
 
-  async function parseTransferError(response) {
+  async function parseTransferError(response, serviceLabel = 'Data API') {
     const status = Number(response?.status || 0) || 0;
     const fallback = await response.text().catch(() => '');
     const parsed = safeParse(fallback, null);
     const error = String(parsed?.error || '').trim() || `request_failed_${status || 'unknown'}`;
     const code = String(parsed?.code || parsed?.error || '').trim() || error;
-    const message = String(parsed?.message || fallback || `Data API request failed (${status || 'unknown'})`).trim();
+    const normalizedServiceLabel = String(serviceLabel || 'Data API').trim() || 'Data API';
+    const message = String(parsed?.message || fallback || `${normalizedServiceLabel} request failed (${status || 'unknown'})`).trim();
     const retryable = parsed?.retryable === true || status === 429 || status >= 500;
     const requestId = String(parsed?.requestId || response.headers?.get?.('x-request-id') || '').trim() || null;
     const wrapped = new Error(message);
@@ -4035,6 +4099,45 @@
         }
       }
       await modules.deleteUser(user);
+    },
+    async resetAccountData() {
+      await init();
+      const user = await requireAuth();
+      const userId = getTransferUserId(user);
+
+      const [transferReset, chatReset] = await Promise.allSettled([
+        resetAccountDataInTransferApi(user, userId),
+        resetAccountDataInChatApi(user)
+      ]);
+
+      const failures = [];
+      if (transferReset.status === 'rejected') failures.push(transferReset.reason);
+      if (chatReset.status === 'rejected') failures.push(chatReset.reason);
+      if (failures.length) {
+        const detail = failures
+          .map((error) => String(error?.message || error || 'account reset failed'))
+          .join(' ');
+        const wrapped = new Error(detail || 'Account reset failed.');
+        wrapped.code = 'account_reset_failed';
+        wrapped.details = failures;
+        throw wrapped;
+      }
+
+      const firebaseMirrorCleared = await clearFirebaseBackupMirror(user);
+      clearPendingSyncStateForAuthChange('account-reset');
+      setLinkedShareLinkSignature('', user);
+      resetLinkedShareCursor(user);
+      clearLinkedShareCache();
+      snapshotRecoveryCheckedThisSession = false;
+      sectorBootstrapCheckedThisSession = false;
+
+      return {
+        ok: true,
+        userId,
+        transfer: transferReset.value || null,
+        chat: chatReset.value || null,
+        firebaseMirrorCleared
+      };
     },
     async signOut() {
       await init();

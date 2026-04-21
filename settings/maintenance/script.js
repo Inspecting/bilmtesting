@@ -475,21 +475,55 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   resetDataBtn?.addEventListener('click', async () => {
-    const confirmReset = confirm('This will erase all local site data on this device. Continue?');
+    let authApi = null;
+    let currentUser = null;
+    try {
+      await ensureAuthReady();
+      authApi = window.bilmAuth;
+      currentUser = authApi?.getCurrentUser?.() || null;
+    } catch {
+      authApi = window.bilmAuth || null;
+      currentUser = authApi?.getCurrentUser?.() || null;
+    }
+
+    const canResetCloudAccount = Boolean(currentUser && typeof authApi?.resetAccountData === 'function');
+    if (currentUser && !canResetCloudAccount) {
+      resetStatusText.textContent = 'Account reset service unavailable. Refresh and try again.';
+      showToast('Account reset service unavailable.', 'error');
+      return;
+    }
+
+    const confirmReset = confirm(
+      canResetCloudAccount
+        ? 'This will erase local site data on this device and permanently wipe your saved account data (cloud backup, sync data, links, and chats). Continue?'
+        : 'This will erase local site data on this device. Sign in first if you also want cloud account data wiped. Continue?'
+    );
     if (!confirmReset) return;
     const typedConfirmation = prompt('Type RESET to confirm data wipe.');
     if (typedConfirmation?.trim().toUpperCase() !== 'RESET') {
       alert('Reset canceled. Confirmation text did not match.');
       return;
     }
+    if (resetDataBtn) resetDataBtn.disabled = true;
     try {
+      if (canResetCloudAccount) {
+        resetStatusText.textContent = 'Resetting account cloud data...';
+        await authApi.resetAccountData();
+      }
       await clearAllLocalData();
-      resetStatusText.textContent = 'Data reset complete. Reloading...';
-      showToast('Data reset complete.', 'success');
+      resetStatusText.textContent = canResetCloudAccount
+        ? 'Account and local data reset complete. Reloading...'
+        : 'Local data reset complete. Reloading...';
+      showToast(
+        canResetCloudAccount ? 'Account and local data reset complete.' : 'Local data reset complete.',
+        'success'
+      );
       window.setTimeout(() => location.reload(), 250);
     } catch (error) {
       resetStatusText.textContent = `Reset failed: ${error.message}`;
       showToast('Data reset failed.', 'error');
+    } finally {
+      if (resetDataBtn) resetDataBtn.disabled = false;
     }
   });
 
