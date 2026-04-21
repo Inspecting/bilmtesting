@@ -119,20 +119,36 @@
     });
   }
 
-  function readStoredActiveConversationId() {
+  function getScopedActiveConversationStorageKey(user = state.currentUser) {
+    const uid = String(user?.uid || '').trim();
+    if (!uid) return '';
+    return `${ACTIVE_CONVERSATION_STORAGE_KEY}:${uid}`;
+  }
+
+  function readStoredActiveConversationId(user = state.currentUser) {
+    const scopedKey = getScopedActiveConversationStorageKey(user);
+    if (!scopedKey) return '';
     try {
-      return String(localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY) || '').trim();
+      const scopedValue = String(localStorage.getItem(scopedKey) || '').trim();
+      if (scopedValue) return scopedValue;
+      const legacyGlobalValue = String(localStorage.getItem(ACTIVE_CONVERSATION_STORAGE_KEY) || '').trim();
+      if (!legacyGlobalValue) return '';
+      localStorage.setItem(scopedKey, legacyGlobalValue);
+      localStorage.removeItem(ACTIVE_CONVERSATION_STORAGE_KEY);
+      return legacyGlobalValue;
     } catch {
       return '';
     }
   }
 
-  function saveActiveConversationId() {
+  function saveActiveConversationId(user = state.currentUser) {
+    const scopedKey = getScopedActiveConversationStorageKey(user);
+    if (!scopedKey) return;
     try {
       if (state.activeConversationId) {
-        localStorage.setItem(ACTIVE_CONVERSATION_STORAGE_KEY, state.activeConversationId);
+        localStorage.setItem(scopedKey, state.activeConversationId);
       } else {
-        localStorage.removeItem(ACTIVE_CONVERSATION_STORAGE_KEY);
+        localStorage.removeItem(scopedKey);
       }
     } catch {
       // Ignore storage failures.
