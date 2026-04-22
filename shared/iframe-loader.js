@@ -16,7 +16,7 @@
       return;
     }
     iframe.removeAttribute('sandbox');
-    iframe.setAttribute('referrerpolicy', 'no-referrer');
+    iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
     iframe.setAttribute('allow', 'fullscreen; encrypted-media; autoplay');
     iframe.setAttribute('allowfullscreen', '');
   }
@@ -58,6 +58,7 @@
     timeoutScheduleMs = DEFAULT_TIMEOUT_SCHEDULE_MS,
     timeoutGraceMs = DEFAULT_TIMEOUT_GRACE_MS,
     lateLoadWindowMs = DEFAULT_LATE_LOAD_WINDOW_MS,
+    minimumLoadTimeMs = 0,
     refreshKey = 'bilm_refresh',
     resetDelayMs = RESET_DELAY_MS,
     isCancelled = null,
@@ -75,6 +76,7 @@
       : DEFAULT_TIMEOUT_SCHEDULE_MS;
     const safeTimeoutGraceMs = Math.max(0, Number(timeoutGraceMs) || 0);
     const safeLateLoadWindowMs = Math.max(0, Number(lateLoadWindowMs) || 0);
+    const safeMinimumLoadTimeMs = Math.max(0, Number(minimumLoadTimeMs) || 0);
 
     for (let index = 0; index < schedule.length; index += 1) {
       if (typeof isCancelled === 'function' && isCancelled()) {
@@ -100,6 +102,7 @@
         let settled = false;
         let timedOut = false;
         let inLateWindow = false;
+        let attemptStartedAtMs = Date.now();
         const timer = setTimeout(() => {
           timedOut = true;
           if (safeTimeoutGraceMs <= 0) {
@@ -141,6 +144,12 @@
 
         function onLoad() {
           const frameLocationHref = readFrameLocationHref(iframe);
+          const elapsedMs = Date.now() - attemptStartedAtMs;
+          if (safeMinimumLoadTimeMs > 0 && frameLocationHref == null && elapsedMs < safeMinimumLoadTimeMs) {
+            // On mobile, ignore unrealistically fast opaque loads that often resolve to a blank/stuck embed shell.
+            iframe.addEventListener('load', onLoad, { once: true });
+            return;
+          }
           if (isBlankFrameLocation(frameLocationHref)) {
             // Ignore reset/intermediate blank loads and keep waiting for real content.
             iframe.addEventListener('load', onLoad, { once: true });
@@ -155,6 +164,7 @@
             timeoutMs,
             attemptUrl,
             late: inLateWindow,
+            elapsedMs,
             frameLocationHref
           });
         }
@@ -165,6 +175,7 @@
 
         iframe.addEventListener('load', onLoad, { once: true });
         iframe.addEventListener('error', onError, { once: true });
+        attemptStartedAtMs = Date.now();
         setEmbedIframeSrc(iframe, attemptUrl);
       });
 

@@ -56,6 +56,13 @@ const visibleServerItems = serverItems.filter((item) => {
   item.style.display = supported ? '' : 'none';
   return supported;
 });
+function isLikelyMobileDevice() {
+  const ua = String(window.navigator?.userAgent || '');
+  if (/android|iphone|ipad|ipod|mobile|iemobile|opera mini/i.test(ua)) return true;
+  const maxTouchPoints = Number(window.navigator?.maxTouchPoints || 0);
+  return maxTouchPoints > 1 && /macintosh/i.test(ua);
+}
+const IS_MOBILE_DEVICE = isLikelyMobileDevice();
 const normalizeServer = (server) => {
   if (isAnime) return animeSupportedServers.includes(server) ? server : 'vidnest';
   return supportedServers.includes(server) ? server : 'embedmaster';
@@ -206,9 +213,11 @@ let imdbId = null;
 let iframeLoadRequestId = 0;
 let lastIframeLoadAtMs = 0;
 let lastIframeLoadedSrc = '';
-const EMBED_LOAD_TIMEOUTS_MS = [12000];
-const EMBED_LOAD_TIMEOUT_GRACE_MS = 700;
-const EMBED_LOAD_LATE_WINDOW_MS = 700;
+const EMBED_LOAD_TIMEOUTS_MS = IS_MOBILE_DEVICE ? [12000, 17000] : [12000];
+const EMBED_LOAD_TIMEOUT_GRACE_MS = IS_MOBILE_DEVICE ? 1100 : 700;
+const EMBED_LOAD_LATE_WINDOW_MS = IS_MOBILE_DEVICE ? 1300 : 700;
+const EMBED_LOAD_RESET_DELAY_MS = IS_MOBILE_DEVICE ? 180 : 80;
+const EMBED_MIN_LOAD_TIME_MS = IS_MOBILE_DEVICE ? 280 : 0;
 const EMBED_MASTER_COLOR_RETRY_SCHEDULE_MS = [100, 320, 800, 1700, 2800, 4200];
 const EMBEDMASTER_ALLOWED_COMMANDS = new Set(['color1', 'fullscreen']);
 let embedMasterLastColorSent = '';
@@ -399,8 +408,8 @@ function getServerLabel(server) {
 
 function setPlayerTrustNote(server = currentServer) {
   if (!playerTrustNote) return;
-  const serverLabel = getServerLabel(server);
-  playerTrustNote.textContent = `Provider: ${serverLabel}. If playback fails, switch servers or tap refresh.`;
+  playerTrustNote.textContent = '';
+  playerTrustNote.hidden = true;
 }
 
 function setEmbedIframeSrc(rawUrl = '') {
@@ -411,7 +420,7 @@ function setEmbedIframeSrc(rawUrl = '') {
     return;
   }
   iframe.removeAttribute('sandbox');
-  iframe.setAttribute('referrerpolicy', 'no-referrer');
+  iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
   iframe.setAttribute('allow', 'fullscreen; encrypted-media; autoplay');
   iframe.setAttribute('allowfullscreen', '');
   iframe.src = url;
@@ -471,6 +480,8 @@ async function loadMovieEmbedUrlWithRetry({ requestId, url, server, allowFallbac
     timeoutScheduleMs: EMBED_LOAD_TIMEOUTS_MS,
     timeoutGraceMs: EMBED_LOAD_TIMEOUT_GRACE_MS,
     lateLoadWindowMs: EMBED_LOAD_LATE_WINDOW_MS,
+    minimumLoadTimeMs: EMBED_MIN_LOAD_TIME_MS,
+    resetDelayMs: EMBED_LOAD_RESET_DELAY_MS,
     isCancelled: () => requestId !== iframeLoadRequestId,
     onAttempt: ({ attempt, timeoutMs }) => {
       console.info('[player] load attempt', {

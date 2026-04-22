@@ -2,7 +2,7 @@
   function applyEmbedAttributes(iframe) {
     if (!iframe) return;
     iframe.removeAttribute('sandbox');
-    iframe.setAttribute('referrerpolicy', 'no-referrer');
+    iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
     iframe.setAttribute('allow', 'fullscreen; encrypted-media; autoplay');
     iframe.setAttribute('allowfullscreen', '');
   }
