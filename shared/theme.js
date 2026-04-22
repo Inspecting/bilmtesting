@@ -27,47 +27,6 @@ function withBase(path) {
   return `${detectBasePath()}${normalized}`;
 }
 
-function getApiOrigin() {
-  return String(window.location.hostname || '').toLowerCase() === 'cdn.jsdelivr.net'
-    ? 'https://watchbilm.org'
-    : window.location.origin;
-}
-
-function rewriteStorageTmdbUrl(rawUrl) {
-  try {
-    const parsed = new URL(String(rawUrl || '').trim(), window.location.href);
-    if (parsed.origin !== 'https://storage-api.watchbilm.org') return rawUrl;
-    if (!parsed.pathname.startsWith('/media/tmdb/')) return rawUrl;
-
-    const tmdbPath = parsed.pathname.slice('/media/tmdb/'.length);
-    const proxyUrl = new URL(`/api/tmdb/${tmdbPath}`, getApiOrigin());
-    parsed.searchParams.forEach((value, key) => {
-      if (String(key || '').toLowerCase() === 'api_key') return;
-      proxyUrl.searchParams.append(key, value);
-    });
-    return proxyUrl.toString();
-  } catch {
-    return rawUrl;
-  }
-}
-
-function installTmdbFetchRewrite() {
-  if (typeof window.fetch !== 'function') return;
-  if (window.__bilmTmdbFetchRewriteInstalled) return;
-
-  const nativeFetch = window.fetch.bind(window);
-  window.fetch = (input, init) => {
-    if (typeof input === 'string' || input instanceof URL) {
-      return nativeFetch(rewriteStorageTmdbUrl(input), init);
-    }
-    return nativeFetch(input, init);
-  };
-
-  window.__bilmTmdbFetchRewriteInstalled = true;
-}
-
-installTmdbFetchRewrite();
-
   const GA_MEASUREMENT_ID = 'G-KJSZFZNESQ';
 
   const initAnalytics = () => {
