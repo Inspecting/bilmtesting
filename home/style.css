@@ -10,7 +10,7 @@ body {
   font-family: 'Poppins', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   background-color: var(--bg-main);
   color: var(--text-primary);
-  overflow: hidden;
+  overflow-x: hidden;
 }
 
 body {
@@ -29,12 +29,15 @@ body {
 main {
   flex: 1;
   overflow-y: auto;
-  width: 100vw;
+  overflow-x: hidden;
+  width: 100%;
+  min-width: 0;
   height: calc(100vh - 64px);
   padding: 86px 24px 88px;
   display: grid;
   align-content: start;
   gap: 20px;
+  box-sizing: border-box;
   opacity: 0;
   transition: opacity var(--transition-base);
 }

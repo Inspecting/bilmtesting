@@ -78,7 +78,7 @@ function withBase(path) {
     velvet: '#140918',
     aurora: '#052329',
     slate: '#111827',
-    sunset: '#22140f'
+    sunset: '#151826'
   };
 
   const hexToRgb = (hex) => {

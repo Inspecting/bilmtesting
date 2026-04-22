@@ -27,7 +27,7 @@
   --bg-velvet: #140918;
   --bg-aurora: #052329;
   --bg-slate: #111827;
-  --bg-sunset: #22140f;
+  --bg-sunset: #151826;
   --bg-custom: #050b13;
   --bg-main: var(--bg-deep);
   --bg-tint: rgba(7, 17, 30, 0.72);
@@ -82,10 +82,10 @@
 
 :root[data-background='sunset'] {
   --bg-main: var(--bg-sunset);
-  --bg-tint: rgba(34, 20, 15, 0.72);
-  --surface-1: rgba(44, 26, 20, 0.9);
-  --surface-2: rgba(56, 34, 27, 0.92);
-  --surface-3: rgba(39, 23, 18, 0.93);
+  --bg-tint: rgba(27, 33, 54, 0.72);
+  --surface-1: rgba(29, 35, 58, 0.9);
+  --surface-2: rgba(38, 46, 74, 0.92);
+  --surface-3: rgba(24, 30, 48, 0.93);
 }
 
 :root[data-background='custom'] {
