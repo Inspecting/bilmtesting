@@ -70,15 +70,6 @@ const METADATA_FETCH_TIMEOUT_MS = 6500;
 const apiCooldownByHost = new Map();
 const PROVIDER_HEALTH_KEY = 'bilm-player-provider-health-v1';
 const PROVIDER_HEALTH_TTL_MS = 6 * 60 * 1000;
-const EMBED_SANDBOX_VALUE = [
-  'allow-forms',
-  'allow-scripts',
-  'allow-same-origin',
-  'allow-popups',
-  'allow-popups-to-escape-sandbox',
-  'allow-presentation',
-  'allow-downloads'
-].join(' ');
 
 function toSlug(value) {
   return (value || '')
@@ -419,7 +410,7 @@ function setEmbedIframeSrc(rawUrl = '') {
     window.BilmEmbedSandbox.setSandboxedIframeSrc(iframe, url);
     return;
   }
-  iframe.setAttribute('sandbox', EMBED_SANDBOX_VALUE);
+  iframe.removeAttribute('sandbox');
   iframe.setAttribute('referrerpolicy', 'no-referrer');
   iframe.setAttribute('allow', 'fullscreen; encrypted-media; autoplay');
   iframe.setAttribute('allowfullscreen', '');
@@ -913,6 +904,12 @@ function updateContinueWatching() {
 
   upsertContinueWatchingItem(payload);
   appendWatchHistorySessionEntry(payload);
+}
+
+function persistViewerStateSnapshot() {
+  const settings = window.bilmTheme?.getSettings?.() || {};
+  if (settings.incognito === true) return;
+  updateContinueWatching();
 }
 
 function loadPlaybackNotes() {
@@ -1520,10 +1517,16 @@ document.addEventListener('fullscreenchange', handleFullscreenStateChange);
 document.addEventListener('webkitfullscreenchange', handleFullscreenStateChange);
 window.addEventListener('resize', handleFullscreenStateChange, { passive: true });
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') {
+    persistViewerStateSnapshot();
+    return;
+  }
   if (document.visibilityState === 'visible') {
     handleFullscreenStateChange();
   }
 });
+window.addEventListener('pagehide', persistViewerStateSnapshot, { passive: true });
+window.addEventListener('beforeunload', persistViewerStateSnapshot);
 handleFullscreenStateChange();
 
 if (iframe) {
