@@ -3,9 +3,42 @@
   const DEFAULT_TIMEOUT_GRACE_MS = 1400;
   const DEFAULT_LATE_LOAD_WINDOW_MS = 2000;
   const RESET_DELAY_MS = 80;
+  const EMBED_SANDBOX_VALUE = [
+    'allow-forms',
+    'allow-scripts',
+    'allow-same-origin',
+    'allow-popups',
+    'allow-popups-to-escape-sandbox',
+    'allow-presentation',
+    'allow-downloads'
+  ].join(' ');
 
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function applyEmbedAttributes(iframe) {
+    if (!iframe) return;
+    const sandboxHelper = window.BilmEmbedSandbox;
+    if (typeof sandboxHelper?.applyEmbedAttributes === 'function') {
+      sandboxHelper.applyEmbedAttributes(iframe);
+      return;
+    }
+    iframe.setAttribute('sandbox', EMBED_SANDBOX_VALUE);
+    iframe.setAttribute('referrerpolicy', 'no-referrer');
+    iframe.setAttribute('allow', 'fullscreen; encrypted-media; autoplay');
+    iframe.setAttribute('allowfullscreen', '');
+  }
+
+  function setEmbedIframeSrc(iframe, url) {
+    if (!iframe) return;
+    const sandboxHelper = window.BilmEmbedSandbox;
+    if (typeof sandboxHelper?.setSandboxedIframeSrc === 'function') {
+      sandboxHelper.setSandboxedIframeSrc(iframe, url);
+      return;
+    }
+    applyEmbedAttributes(iframe);
+    iframe.src = String(url || '').trim() || 'about:blank';
   }
 
   function buildReloadableUrl(url, refreshKey) {
@@ -65,8 +98,7 @@
         onAttempt({ attempt, timeoutMs, url: attemptUrl });
       }
 
-      iframe.removeAttribute('sandbox');
-      iframe.src = 'about:blank';
+      setEmbedIframeSrc(iframe, 'about:blank');
       await delay(resetDelayMs);
 
       if (typeof isCancelled === 'function' && isCancelled()) {
@@ -142,8 +174,7 @@
 
         iframe.addEventListener('load', onLoad, { once: true });
         iframe.addEventListener('error', onError, { once: true });
-        iframe.removeAttribute('sandbox');
-        iframe.src = attemptUrl;
+        setEmbedIframeSrc(iframe, attemptUrl);
       });
 
       if (typeof isCancelled === 'function' && isCancelled()) {

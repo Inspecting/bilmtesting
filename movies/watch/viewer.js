@@ -26,6 +26,7 @@ const closeBtn = document.getElementById('closeBtn');
 const mediaTitle = document.getElementById('mediaTitle');
 const mediaMeta = document.getElementById('mediaMeta');
 const playerStatus = document.getElementById('playerStatus');
+const playerTrustNote = document.getElementById('playerTrustNote');
 const favoriteBtn = document.getElementById('favoriteBtn');
 const watchLaterBtn = document.getElementById('watchLaterBtn');
 const playbackNoteHoursInput = document.getElementById('playbackNoteHours');
@@ -69,6 +70,15 @@ const METADATA_FETCH_TIMEOUT_MS = 6500;
 const apiCooldownByHost = new Map();
 const PROVIDER_HEALTH_KEY = 'bilm-player-provider-health-v1';
 const PROVIDER_HEALTH_TTL_MS = 6 * 60 * 1000;
+const EMBED_SANDBOX_VALUE = [
+  'allow-forms',
+  'allow-scripts',
+  'allow-same-origin',
+  'allow-popups',
+  'allow-popups-to-escape-sandbox',
+  'allow-presentation',
+  'allow-downloads'
+].join(' ');
 
 function toSlug(value) {
   return (value || '')
@@ -396,6 +406,26 @@ function getServerLabel(server) {
   return String(item?.textContent || server || 'server').trim();
 }
 
+function setPlayerTrustNote(server = currentServer) {
+  if (!playerTrustNote) return;
+  const serverLabel = getServerLabel(server);
+  playerTrustNote.textContent = `Provider: ${serverLabel}. If playback fails, switch servers or tap refresh.`;
+}
+
+function setEmbedIframeSrc(rawUrl = '') {
+  const url = String(rawUrl || '').trim() || 'about:blank';
+  if (!iframe) return;
+  if (window.BilmEmbedSandbox?.setSandboxedIframeSrc) {
+    window.BilmEmbedSandbox.setSandboxedIframeSrc(iframe, url);
+    return;
+  }
+  iframe.setAttribute('sandbox', EMBED_SANDBOX_VALUE);
+  iframe.setAttribute('referrerpolicy', 'no-referrer');
+  iframe.setAttribute('allow', 'fullscreen; encrypted-media; autoplay');
+  iframe.setAttribute('allowfullscreen', '');
+  iframe.src = url;
+}
+
 function getFallbackServer(failedServer) {
   if (isAnime) return '';
   return fallbackServerOrder.find((server) => (
@@ -436,8 +466,7 @@ async function loadMovieEmbedUrlWithRetry({ requestId, url, server, allowFallbac
   const requestStartedAtMs = Date.now();
   const loader = window.BilmIframeLoader;
   if (!loader?.loadWithRetry) {
-    iframe.removeAttribute('sandbox');
-    iframe.src = url;
+    setEmbedIframeSrc(url);
     if (server === 'embedmaster') {
       scheduleEmbedMasterAccentSync();
     }
@@ -590,16 +619,15 @@ function updateIframe() {
   const idToUse = isAnime ? animeId : (imdbId || contentId);
   if (!idToUse) {
     console.warn('No valid ID parameter provided.');
-    iframe.removeAttribute('sandbox');
-    iframe.src = '';
+    setEmbedIframeSrc('about:blank');
     setPlayerStatus('Missing title ID. Open this title again from the catalog.', 'error');
     return;
   }
 
   const { server, url } = resolveMovieEmbedRequest();
+  setPlayerTrustNote(server);
   if (!url) {
-    iframe.removeAttribute('sandbox');
-    iframe.src = '';
+    setEmbedIframeSrc('about:blank');
     setPlayerStatus('No playable URL for this title on the selected server.', 'error');
     return;
   }
@@ -1163,6 +1191,7 @@ document.addEventListener('click', () => {
 function setActiveServer(server) {
   visibleServerItems.forEach((i) => i.classList.toggle('active', i.getAttribute('data-server') === server));
   currentServer = server;
+  setPlayerTrustNote(server);
   if (server !== 'embedmaster') {
     embedMasterLastColorSent = '';
   }

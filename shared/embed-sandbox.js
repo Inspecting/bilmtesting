@@ -1,7 +1,17 @@
 (function () {
+  const EMBED_SANDBOX_VALUE = [
+    'allow-forms',
+    'allow-scripts',
+    'allow-same-origin',
+    'allow-popups',
+    'allow-popups-to-escape-sandbox',
+    'allow-presentation',
+    'allow-downloads'
+  ].join(' ');
+
   function applyEmbedAttributes(iframe) {
     if (!iframe) return;
-    iframe.removeAttribute('sandbox');
+    iframe.setAttribute('sandbox', EMBED_SANDBOX_VALUE);
     iframe.setAttribute('referrerpolicy', 'no-referrer');
     iframe.setAttribute('allow', 'fullscreen; encrypted-media; autoplay');
     iframe.setAttribute('allowfullscreen', '');

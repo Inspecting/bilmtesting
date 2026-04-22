@@ -32,6 +32,7 @@
         <div id="mediaTitle">Loading title…</div>
         <div id="mediaMeta">Loading date…</div>
         <div id="playerStatus" class="player-status" role="status" aria-live="polite"></div>
+        <div id="playerTrustNote" class="player-trust-note">Using third-party providers. If one fails, switch servers or tap refresh.</div>
       </div>
       <div id="playerContainer">
         <iframe
@@ -39,6 +40,7 @@
           src=""
           allowfullscreen
           allow="fullscreen; encrypted-media"
+          sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation allow-downloads"
           playsinline
           scrolling="no"
           referrerpolicy="no-referrer"
@@ -134,6 +136,7 @@
 
 <script src="../../shared/media-card.js"></script>
 <script src="../../shared/media-identity.js"></script>
+<script src="../../shared/embed-sandbox.js"></script>
 <script src="../../shared/iframe-loader.js"></script>
 <script src="./viewer.js"></script>
 

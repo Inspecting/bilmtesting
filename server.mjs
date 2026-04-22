@@ -83,6 +83,7 @@ const HEALTH_CHECK_ALLOWED_HOSTS = resolveHealthCheckAllowedHosts();
 const ADMIN_EMAIL_ALLOWLIST = resolveAdminEmailAllowlist();
 const CHAT_API_BASE = resolveChatApiBase();
 const CHAT_PROXY_ALLOW_AUTH_BYPASS = parseEnvBool('CHAT_PROXY_ALLOW_AUTH_BYPASS', false);
+const BILM_OPS_TOKEN = String(process.env.BILM_OPS_TOKEN || '').trim();
 const RATE_LIMIT_STORE = new Map();
 let nextRateLimitSweepAtMs = 0;
 const RATE_LIMIT_STORE_SOFT_CAP = 5000;
@@ -111,9 +112,25 @@ const CORS_ALLOWED_ORIGINS = new Set([
   'https://watchbilm.org',
   'https://www.watchbilm.org',
   'https://admin.watchbilm.org',
-  'https://inspecting.github.io',
   'https://cdn.jsdelivr.net'
 ]);
+
+const CSP_HEADER_VALUE = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'self'",
+  "img-src 'self' data: https:",
+  "font-src 'self' https://fonts.gstatic.com data:",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net",
+  "connect-src 'self' https: wss:",
+  "frame-src https:",
+  "media-src 'self' https: blob:",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'",
+  'upgrade-insecure-requests'
+].join('; ');
 
 const BASE_SECURITY_HEADERS = Object.freeze({
   'strict-transport-security': 'max-age=31536000; includeSubDomains; preload',
@@ -121,7 +138,8 @@ const BASE_SECURITY_HEADERS = Object.freeze({
   'referrer-policy': 'strict-origin-when-cross-origin',
   'x-frame-options': 'SAMEORIGIN',
   'permissions-policy': 'camera=(), microphone=(), geolocation=()',
-  'x-permitted-cross-domain-policies': 'none'
+  'x-permitted-cross-domain-policies': 'none',
+  'content-security-policy': CSP_HEADER_VALUE
 });
 
 const mimeTypes = new Map([
@@ -264,6 +282,56 @@ function buildCorsHeaders(req, {
   corsHeaders.vary = appendVary(corsHeaders.vary, 'Access-Control-Request-Method');
 
   return corsHeaders;
+}
+
+function readOpsTokenFromRequest(req) {
+  const directToken = String(req?.headers?.['x-bilm-ops-token'] || '').trim();
+  if (directToken) return directToken;
+  const authHeader = String(req?.headers?.authorization || '').trim();
+  const match = /^bearer\s+(.+)$/i.exec(authHeader);
+  if (!match) return '';
+  return String(match[1] || '').trim();
+}
+
+function requireOpsTokenAuth(req, res, { corsHeaders = {}, rateLimitHeadersMap = {} } = {}) {
+  if (!BILM_OPS_TOKEN) {
+    sendJson(res, 503, {
+      error: 'Ops endpoint unavailable',
+      code: 'ops_token_not_configured'
+    }, {
+      ...corsHeaders,
+      ...rateLimitHeadersMap,
+      'cache-control': 'no-store'
+    });
+    return false;
+  }
+
+  const token = readOpsTokenFromRequest(req);
+  if (!token) {
+    sendJson(res, 401, {
+      error: 'Unauthorized',
+      code: 'missing_ops_token'
+    }, {
+      ...corsHeaders,
+      ...rateLimitHeadersMap,
+      'cache-control': 'no-store'
+    });
+    return false;
+  }
+
+  if (token !== BILM_OPS_TOKEN) {
+    sendJson(res, 403, {
+      error: 'Forbidden',
+      code: 'invalid_ops_token'
+    }, {
+      ...corsHeaders,
+      ...rateLimitHeadersMap,
+      'cache-control': 'no-store'
+    });
+    return false;
+  }
+
+  return true;
 }
 
 function sweepRateLimitStore(nowMs) {
@@ -1018,11 +1086,8 @@ function sanitizeHealthTargets(rawTargets = []) {
       }
       const normalizedHost = String(parsed.hostname || '').trim().toLowerCase();
       const normalizedProtocol = String(parsed.protocol || '').trim().toLowerCase();
-      const isLoopbackHost = normalizedHost === 'localhost'
-        || normalizedHost === '127.0.0.1'
-        || normalizedHost === '::1';
-      const protocolAllowed = normalizedProtocol === 'https:' || (normalizedProtocol === 'http:' && isLoopbackHost);
-      const hostAllowed = isLoopbackHost || HEALTH_CHECK_ALLOWED_HOSTS.has(normalizedHost);
+      const protocolAllowed = normalizedProtocol === 'https:';
+      const hostAllowed = HEALTH_CHECK_ALLOWED_HOSTS.has(normalizedHost);
       if (!protocolAllowed || !hostAllowed) {
         return {
           label,
@@ -1156,7 +1221,7 @@ async function handleHealthCheck(req, res) {
   if (req.method === 'OPTIONS') {
     const preflightCorsHeaders = buildCorsHeaders(req, {
       methods: 'POST, OPTIONS',
-      defaultAllowHeaders: 'content-type',
+      defaultAllowHeaders: 'content-type, authorization, x-bilm-ops-token',
       includePreflight: true
     });
     sendNoContent(res, 204, {
@@ -1178,6 +1243,7 @@ async function handleHealthCheck(req, res) {
 
   const { blocked, headers: rateLimitHeadersMap } = enforceRateLimit(req, res, 'healthcheck', corsHeaders);
   if (blocked) return;
+  if (!requireOpsTokenAuth(req, res, { corsHeaders, rateLimitHeadersMap })) return;
 
   let body;
   try {
@@ -1236,7 +1302,7 @@ async function handleAdminConfig(req, res) {
   if (req.method === 'OPTIONS') {
     const preflightCorsHeaders = buildCorsHeaders(req, {
       methods: 'GET, OPTIONS',
-      defaultAllowHeaders: 'content-type',
+      defaultAllowHeaders: 'content-type, authorization, x-bilm-ops-token',
       includePreflight: true
     });
     sendNoContent(res, 204, {
@@ -1256,11 +1322,16 @@ async function handleAdminConfig(req, res) {
     return;
   }
 
+  const { blocked, headers: rateLimitHeadersMap } = enforceRateLimit(req, res, 'healthcheck', corsHeaders);
+  if (blocked) return;
+  if (!requireOpsTokenAuth(req, res, { corsHeaders, rateLimitHeadersMap })) return;
+
   sendJson(res, 200, {
     ok: true,
     adminEmails: ADMIN_EMAIL_ALLOWLIST
   }, {
     ...corsHeaders,
+    ...rateLimitHeadersMap,
     'cache-control': 'no-store'
   });
 }

@@ -1,5 +1,6 @@
 (() => {
   const DEFAULT_ADMIN_EMAILS = Object.freeze(['watchbilm@gmail.com']);
+  const ADMIN_TOKEN_STORAGE_KEYS = Object.freeze(['bilm-ops-token', 'bilm-admin-config-token']);
   let configuredEmailsPromise = null;
 
   function detectBasePath() {
@@ -48,16 +49,48 @@
     return [...normalized];
   }
 
+  function readAdminConfigToken() {
+    try {
+      const fromWindow = String(window.BILM_ADMIN_CONFIG_TOKEN || '').trim();
+      if (fromWindow) return fromWindow;
+    } catch {
+      // Ignore read failures.
+    }
+
+    const fromMeta = String(document.querySelector('meta[name="bilm-admin-config-token"]')?.getAttribute('content') || '').trim();
+    if (fromMeta) return fromMeta;
+
+    for (const key of ADMIN_TOKEN_STORAGE_KEYS) {
+      try {
+        const localValue = String(localStorage.getItem(key) || '').trim();
+        if (localValue) return localValue;
+      } catch {
+        // Ignore storage access failures.
+      }
+      try {
+        const sessionValue = String(sessionStorage.getItem(key) || '').trim();
+        if (sessionValue) return sessionValue;
+      } catch {
+        // Ignore storage access failures.
+      }
+    }
+
+    return '';
+  }
+
   async function fetchConfiguredAdminEmails() {
     if (configuredEmailsPromise) return configuredEmailsPromise;
     configuredEmailsPromise = (async () => {
       try {
+        const opsToken = readAdminConfigToken();
+        if (!opsToken) return [];
         const response = await fetch(withBase('/api/admin/config'), {
           method: 'GET',
           cache: 'no-store',
           credentials: 'same-origin',
           headers: {
-            accept: 'application/json'
+            accept: 'application/json',
+            'x-bilm-ops-token': opsToken
           }
         });
         if (!response.ok) return [];

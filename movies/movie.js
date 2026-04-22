@@ -186,6 +186,30 @@ function sanitizeText(value) {
     .trim();
 }
 
+function setTrailerUnavailable(message = 'No trailer available.') {
+  const trailerBox = document.getElementById('trailerBox');
+  if (!trailerBox) return;
+  trailerBox.textContent = '';
+  const paragraph = document.createElement('p');
+  paragraph.className = 'subtitle';
+  paragraph.textContent = String(message || 'No trailer available.');
+  trailerBox.appendChild(paragraph);
+}
+
+function setTrailerIframe(trailerKey) {
+  const trailerBox = document.getElementById('trailerBox');
+  if (!trailerBox) return false;
+  const key = String(trailerKey || '').trim();
+  if (!/^[a-z0-9_-]{6,64}$/i.test(key)) return false;
+  trailerBox.textContent = '';
+  const iframe = document.createElement('iframe');
+  iframe.src = `https://www.youtube.com/embed/${encodeURIComponent(key)}`;
+  iframe.title = 'Trailer';
+  iframe.setAttribute('allowfullscreen', '');
+  trailerBox.appendChild(iframe);
+  return true;
+}
+
 function setMoreLikeStatus(message) {
   if (moreLikeStatus) {
     moreLikeStatus.textContent = message;
@@ -311,8 +335,7 @@ function renderAnimeTrailer(details) {
   const trailerSite = String(details?.trailer?.site || '').trim().toLowerCase();
   const trailerId = String(details?.trailer?.id || '').trim();
   if (trailerSite === 'youtube' && trailerId) {
-    document.getElementById('trailerBox').innerHTML = `<iframe src="https://www.youtube.com/embed/${encodeURIComponent(trailerId)}" title="Trailer" allowfullscreen></iframe>`;
-    return true;
+    return setTrailerIframe(trailerId);
   }
   return false;
 }
@@ -339,7 +362,7 @@ async function renderStrictTmdbAnimeFallback({ title, year, includeRecommendatio
   const videos = await fetchJSON(`https://storage-api.watchbilm.org/media/tmdb/movie/${strictTmdbId}/videos`);
   const trailer = (videos?.results || []).find((video) => video.site === 'YouTube' && video.type === 'Trailer');
   if (trailer?.key) {
-    document.getElementById('trailerBox').innerHTML = `<iframe src="https://www.youtube.com/embed/${encodeURIComponent(trailer.key)}" title="Trailer" allowfullscreen></iframe>`;
+    setTrailerIframe(trailer.key);
   }
 
   if (!includeRecommendations || !moreLikeEl) return Boolean(trailer?.key);
@@ -467,7 +490,7 @@ async function fetchAnimeMovieDetails() {
 
     const hasAniListTrailer = renderAnimeTrailer(details);
     if (!hasAniListTrailer) {
-      document.getElementById('trailerBox').innerHTML = '<p class="subtitle">Trailer not available from AniList. Trying strict fallback…</p>';
+      setTrailerUnavailable('Trailer not available from AniList. Trying strict fallback...');
     }
 
     document.getElementById('castLine').textContent = 'Cast data unavailable for anime source.';
@@ -494,7 +517,7 @@ async function fetchAnimeMovieDetails() {
         });
         if (!fallbackUsed) {
           if (!hasAniListTrailer) {
-            document.getElementById('trailerBox').innerHTML = '<p class="subtitle">No trailer available right now.</p>';
+            setTrailerUnavailable('No trailer available right now.');
           }
           if (!recommendations.length) {
             setMoreLikeStatus('Recommendations unavailable for anime right now.');
@@ -589,9 +612,9 @@ async function loadMovieDetails() {
     });
 
     const trailer = (videos.results || []).find((video) => video.site === 'YouTube' && video.type === 'Trailer') || videos.results?.[0];
-    document.getElementById('trailerBox').innerHTML = trailer
-      ? `<iframe src="https://www.youtube.com/embed/${trailer.key}" title="Trailer" allowfullscreen></iframe>`
-      : '<p class="subtitle">No trailer available.</p>';
+    if (!setTrailerIframe(trailer?.key)) {
+      setTrailerUnavailable('No trailer available.');
+    }
 
     document.getElementById('castLine').textContent = (credits.cast || []).slice(0, 10).map((person) => person.name).join(' • ') || 'No cast information.';
 

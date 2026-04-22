@@ -236,6 +236,12 @@ main {
   color: #f87171;
 }
 
+.player-trust-note {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  text-align: left;
+}
+
 #playerContainer {
   width: 100%;
   aspect-ratio: 16 / 9;
