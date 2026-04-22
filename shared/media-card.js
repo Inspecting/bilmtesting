@@ -2,6 +2,10 @@
   const NO_IMAGE = 'https://via.placeholder.com/140x210?text=No+Image';
   const certificationCache = new Map();
   const certificationPending = new Map();
+  const CERTIFICATION_COOLDOWN_MS = 260;
+  const CERTIFICATION_MAX_RETRIES = 3;
+  const certificationCooldownByHost = new Map();
+  const certificationQueueByHost = new Map();
   const APP_ROOT_PATTERN = /^\/(?:home|movies|tv|search|settings|random|test|shared)(?:\/|$)/i;
 
   function detectBasePath() {
@@ -122,9 +126,57 @@
     return '';
   }
 
+  async function sleep(ms) {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  function getApiHost(url) {
+    try {
+      return new URL(url, window.location.origin).host || 'default';
+    } catch {
+      return 'default';
+    }
+  }
+
+  async function waitForCertificationCooldown(url) {
+    const host = getApiHost(url);
+    const previous = certificationQueueByHost.get(host) || Promise.resolve();
+    const turn = previous
+      .catch(() => {})
+      .then(async () => {
+        const now = Date.now();
+        const nextAllowedAt = certificationCooldownByHost.get(host) || 0;
+        const waitMs = Math.max(0, nextAllowedAt - now);
+        if (waitMs > 0) {
+          await sleep(waitMs);
+        }
+        certificationCooldownByHost.set(host, Date.now() + CERTIFICATION_COOLDOWN_MS);
+      });
+    certificationQueueByHost.set(host, turn);
+    return turn;
+  }
+
+  function shouldUseStorageApi() {
+    const host = String(window.location.hostname || '').toLowerCase();
+    return host === 'watchbilm.org'
+      || host.endsWith('.watchbilm.org')
+      || host === 'cdn.jsdelivr.net';
+  }
+
+  function getRetryBackoffMs(response, attempt) {
+    const retryAfterHeader = response?.headers?.get('Retry-After');
+    const retryAfterSeconds = Number.parseFloat(retryAfterHeader);
+    if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+      return Math.min(5000, retryAfterSeconds * 1000);
+    }
+    const exponentialBase = 420 * (2 ** attempt);
+    return Math.min(5000, exponentialBase);
+  }
+
   async function fetchTmdbCertification(item) {
     const key = getCertificationKey(item);
     if (!key) return '';
+    if (!shouldUseStorageApi()) return '';
     if (certificationCache.has(key)) return certificationCache.get(key);
     if (certificationPending.has(key)) return certificationPending.get(key);
 
@@ -133,22 +185,27 @@
         const [mediaType, mediaId] = key.split(':');
         const endpoint = mediaType === 'movie' ? 'release_dates' : 'content_ratings';
         const primaryUrl = `https://storage-api.watchbilm.org/media/tmdb/${mediaType}/${encodeURIComponent(mediaId)}/${endpoint}`;
-        let response = await fetch(primaryUrl);
-        if (!response.ok) {
-          const backupUrl = new URL(`/api/tmdb/${mediaType}/${encodeURIComponent(mediaId)}/${endpoint}`, getApiOrigin()).toString();
-          console.info('[api-fallback] media-card certification using backup provider', {
-            primaryUrl,
-            backupUrl
-          });
-          response = await fetch(backupUrl);
+        for (let attempt = 0; attempt <= CERTIFICATION_MAX_RETRIES; attempt += 1) {
+          await waitForCertificationCooldown(primaryUrl);
+          const response = await fetch(primaryUrl);
+          if (response.ok) {
+            const data = await response.json();
+            const certification = mediaType === 'movie'
+              ? pickMovieCertification(data?.results)
+              : pickTvCertification(data?.results);
+            certificationCache.set(key, certification);
+            return certification;
+          }
+
+          if ((response.status === 429 || response.status >= 500) && attempt < CERTIFICATION_MAX_RETRIES) {
+            await sleep(getRetryBackoffMs(response, attempt));
+            continue;
+          }
+          break;
         }
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        const certification = mediaType === 'movie'
-          ? pickMovieCertification(data?.results)
-          : pickTvCertification(data?.results);
-        certificationCache.set(key, certification);
-        return certification;
+
+        certificationCache.set(key, '');
+        return '';
       } catch {
         certificationCache.set(key, '');
         return '';

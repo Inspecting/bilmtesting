@@ -1,4 +1,4 @@
-const cacheName = 'bilm-cache-v5';
+const cacheName = 'bilm-cache-v6';
 const scopeUrl = new URL(self.registration.scope);
 const offlineDocument = new URL('index.html', scopeUrl).toString();
 const filesToCache = ['.', 'index.html', 'home/index.html', 'manifest.json', 'icon.png']

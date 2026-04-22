@@ -35,10 +35,10 @@ const loadedCounts = {};
 const loadedMovieIds = {};
 const animeLoadedCounts = {};
 const animeLoadedIds = {};
-const API_COOLDOWN_MS = 100;
+const API_COOLDOWN_MS = 180;
 const API_MAX_RETRIES = 2;
-const SECTION_API_MAX_RETRIES = 1;
-const SECTION_LOAD_INTERVAL_MS = 100;
+const SECTION_API_MAX_RETRIES = 3;
+const SECTION_LOAD_INTERVAL_MS = 180;
 const API_DEBUG_TIMING = false;
 const apiCooldownByHost = new Map();
 const apiRequestQueueByHost = new Map();
@@ -465,6 +465,16 @@ function getStorageApiBackupPostUrl(rawUrl) {
   }
 }
 
+function getRetryBackoffMs(response, attempt) {
+  const retryAfterHeader = response?.headers?.get('Retry-After');
+  const retryAfterSeconds = Number.parseFloat(retryAfterHeader);
+  if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+    return Math.min(5000, retryAfterSeconds * 1000);
+  }
+  const exponentialBase = 420 * (2 ** attempt);
+  return Math.min(5000, exponentialBase);
+}
+
 async function fetchJSON(url, options = {}) {
   const signal = getRequestSignal(options.signal);
   const maxRetries = options.maxRetries ?? API_MAX_RETRIES;
@@ -492,10 +502,7 @@ async function fetchJSON(url, options = {}) {
         }
 
         if (res.status === 429 || res.status >= 500) {
-          const retryAfter = Number.parseFloat(res.headers.get('Retry-After'));
-          const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
-            ? retryAfter * 1000
-            : Math.min(350, 150 * (attempt + 1));
+          const backoffMs = getRetryBackoffMs(res, attempt);
           if (attempt < maxRetries) {
             debugApiTiming('retry-backoff', { url, method: 'GET', attempt, backoffMs });
             await sleep(backoffMs);
@@ -508,21 +515,6 @@ async function fetchJSON(url, options = {}) {
         if (isAbortError(error) || signal.aborted) return null;
         if (attempt >= maxRetries) break;
       }
-    }
-
-    const backupUrl = getStorageApiBackupGetUrl(url);
-    if (!backupUrl || backupUrl === url) return null;
-    try {
-      console.info('[api-fallback] movies page using backup provider', {
-        primaryUrl: url,
-        backupUrl
-      });
-      await waitForApiCooldown(backupUrl, signal);
-      const fallbackResponse = await fetch(backupUrl, { signal });
-      if (!fallbackResponse.ok) return null;
-      return await fallbackResponse.json();
-    } catch {
-      return null;
     }
 
     return null;
@@ -572,10 +564,7 @@ async function postJSON(url, body, options = {}) {
         }
 
         if (res.status === 429 || res.status >= 500) {
-          const retryAfter = Number.parseFloat(res.headers.get('Retry-After'));
-          const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
-            ? retryAfter * 1000
-            : Math.min(350, 150 * (attempt + 1));
+          const backoffMs = getRetryBackoffMs(res, attempt);
           if (attempt < maxRetries) {
             debugApiTiming('retry-backoff', { url, method: 'POST', attempt, backoffMs });
             await sleep(backoffMs);
@@ -593,10 +582,6 @@ async function postJSON(url, body, options = {}) {
     const backupUrl = getStorageApiBackupPostUrl(url);
     if (!backupUrl || backupUrl === url) return null;
     try {
-      console.info('[api-fallback] movies page using backup provider', {
-        primaryUrl: url,
-        backupUrl
-      });
       await waitForApiCooldown(backupUrl, signal);
       const fallbackResponse = await fetch(backupUrl, {
         method: 'POST',
@@ -798,16 +783,21 @@ function renderQuickFilters(sections, containerId = 'quickFilters') {
 
 async function loadMoviesForSection(section) {
   if (pageRequestController.signal.aborted) return false;
+  const rowEl = document.getElementById(`row-${section.slug}`);
+  const statusEl = rowEl?.closest('.section')?.querySelector('.section-status');
+  if (!rowEl || pageRequestController.signal.aborted) return false;
+
   loadedCounts[section.slug] ??= 0;
   loadedMovieIds[section.slug] ??= new Set();
 
   const page = Math.floor(loadedCounts[section.slug] / moviesPerLoad) + 1;
   const movies = await fetchMovies(section.endpoint, page);
-  if (!movies.length) return false;
-
-  const rowEl = document.getElementById(`row-${section.slug}`);
-  const statusEl = rowEl?.closest('.section')?.querySelector('.section-status');
-  if (!rowEl || pageRequestController.signal.aborted) return false;
+  if (!movies.length) {
+    if (statusEl && !rowEl.children.length) {
+      statusEl.textContent = 'Could not load titles right now. Please refresh in a moment.';
+    }
+    return false;
+  }
 
   const uniqueMovies = movies.filter((movie) => !loadedMovieIds[section.slug].has(movie.id));
 
