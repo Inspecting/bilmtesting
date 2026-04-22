@@ -1,97 +1,91 @@
 :root {
-  --accent: #a855f7;
-  --button-accent: #a855f7;
-  --accent-soft: rgba(168, 85, 247, 0.2);
-  --accent-glow: rgba(168, 85, 247, 0.45);
-  --accent-strong: rgba(168, 85, 247, 0.75);
-  --text-primary: #f5f3ff;
-  --text-muted: #b7b1d6;
-  --text-subtle: #8f88b3;
-  --border: rgba(148, 137, 196, 0.2);
-  --surface-1: rgba(22, 19, 36, 0.92);
-  --surface-2: rgba(30, 24, 44, 0.92);
-  --surface-3: rgba(18, 16, 28, 0.92);
-  --shadow-lg: 0 20px 45px rgba(10, 7, 20, 0.45);
-  --shadow-md: 0 10px 30px rgba(12, 9, 24, 0.35);
-  --shadow-glow: 0 0 16px var(--accent-glow);
-  --radius-xl: 20px;
+  --accent: #34d0ff;
+  --button-accent: #34d0ff;
+  --accent-soft: rgba(52, 208, 255, 0.18);
+  --accent-glow: rgba(52, 208, 255, 0.45);
+  --accent-strong: rgba(52, 208, 255, 0.72);
+  --text-primary: #e9f5ff;
+  --text-muted: #9db4c7;
+  --text-subtle: #778a9e;
+  --text-inverse: #0a1420;
+  --border: rgba(127, 160, 186, 0.24);
+  --surface-1: rgba(13, 22, 34, 0.92);
+  --surface-2: rgba(17, 29, 44, 0.92);
+  --surface-3: rgba(10, 17, 27, 0.94);
+  --shadow-sm: 0 8px 18px rgba(2, 8, 16, 0.34);
+  --shadow-md: 0 16px 30px rgba(2, 8, 16, 0.42);
+  --shadow-lg: 0 24px 46px rgba(1, 6, 13, 0.54);
+  --shadow-glow: 0 0 20px var(--accent-glow);
+  --radius-xl: 22px;
   --radius-lg: 16px;
   --radius-md: 12px;
   --radius-sm: 10px;
   --transition-fast: 160ms ease;
   --transition-base: 240ms ease;
-  --bg-deep: #0b0b14;
-  --bg-midnight: #05050b;
-  --bg-velvet: #120818;
-  --bg-aurora: #062a2a;
+  --bg-deep: #050b13;
+  --bg-midnight: #020710;
+  --bg-velvet: #140918;
+  --bg-aurora: #052329;
   --bg-slate: #111827;
-  --bg-sunset: #2a1326;
-  --bg-custom: #0b0b14;
+  --bg-sunset: #22140f;
+  --bg-custom: #050b13;
   --bg-main: var(--bg-deep);
-  --bg-tint: rgba(14, 10, 28, 0.7);
-  --surface-input: color-mix(in srgb, var(--surface-2) 86%, #ffffff 8%);
-  --surface-input-soft: color-mix(in srgb, var(--surface-2) 78%, transparent);
+  --bg-tint: rgba(7, 17, 30, 0.72);
+  --surface-input: color-mix(in srgb, var(--surface-2) 88%, #ffffff 6%);
+  --surface-input-soft: color-mix(in srgb, var(--surface-2) 76%, transparent);
   --surface-overlay: color-mix(in srgb, var(--bg-main) 76%, transparent);
-  --surface-player: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  --surface-player: color-mix(in srgb, var(--surface-2) 94%, transparent);
   --surface-player-header-start: color-mix(in srgb, var(--surface-2) 96%, transparent);
-  --surface-player-header-end: color-mix(in srgb, var(--surface-1) 92%, var(--accent-soft));
-  --ring-accent: color-mix(in srgb, var(--accent) 28%, transparent);
+  --surface-player-header-end: color-mix(in srgb, var(--surface-1) 86%, var(--accent-soft));
+  --ring-accent: color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
 :root[data-background='deep'] {
   --bg-main: var(--bg-deep);
-  --bg-tint: rgba(14, 10, 28, 0.7);
-  --surface-input: color-mix(in srgb, var(--surface-2) 86%, #ffffff 8%);
-  --surface-input-soft: color-mix(in srgb, var(--surface-2) 78%, transparent);
-  --surface-overlay: color-mix(in srgb, var(--bg-main) 76%, transparent);
-  --surface-player: color-mix(in srgb, var(--surface-2) 92%, transparent);
-  --surface-player-header-start: color-mix(in srgb, var(--surface-2) 96%, transparent);
-  --surface-player-header-end: color-mix(in srgb, var(--surface-1) 92%, var(--accent-soft));
-  --ring-accent: color-mix(in srgb, var(--accent) 28%, transparent);
-  --surface-1: rgba(21, 18, 34, 0.92);
-  --surface-2: rgba(28, 22, 42, 0.92);
-  --surface-3: rgba(18, 16, 28, 0.92);
+  --bg-tint: rgba(7, 17, 30, 0.72);
+  --surface-1: rgba(13, 22, 34, 0.92);
+  --surface-2: rgba(17, 29, 44, 0.92);
+  --surface-3: rgba(10, 17, 27, 0.94);
 }
 
 :root[data-background='midnight'] {
   --bg-main: var(--bg-midnight);
-  --bg-tint: rgba(8, 7, 18, 0.74);
-  --surface-1: rgba(16, 14, 28, 0.94);
-  --surface-2: rgba(22, 18, 36, 0.94);
-  --surface-3: rgba(12, 10, 22, 0.95);
+  --bg-tint: rgba(4, 10, 21, 0.74);
+  --surface-1: rgba(10, 17, 29, 0.94);
+  --surface-2: rgba(14, 24, 38, 0.94);
+  --surface-3: rgba(8, 14, 23, 0.95);
 }
 
 :root[data-background='velvet'] {
   --bg-main: var(--bg-velvet);
-  --bg-tint: rgba(22, 10, 34, 0.72);
-  --surface-1: rgba(26, 14, 40, 0.92);
-  --surface-2: rgba(34, 18, 48, 0.94);
-  --surface-3: rgba(22, 12, 34, 0.94);
+  --bg-tint: rgba(27, 12, 33, 0.72);
+  --surface-1: rgba(31, 15, 40, 0.92);
+  --surface-2: rgba(39, 19, 47, 0.94);
+  --surface-3: rgba(24, 12, 30, 0.94);
 }
-
 
 :root[data-background='aurora'] {
   --bg-main: var(--bg-aurora);
-  --bg-tint: rgba(6, 42, 42, 0.72);
-  --surface-1: rgba(8, 48, 48, 0.9);
-  --surface-2: rgba(10, 58, 58, 0.92);
-  --surface-3: rgba(8, 40, 40, 0.93);
+  --bg-tint: rgba(5, 35, 41, 0.72);
+  --surface-1: rgba(8, 45, 52, 0.9);
+  --surface-2: rgba(11, 56, 64, 0.92);
+  --surface-3: rgba(8, 36, 42, 0.93);
 }
 
 :root[data-background='slate'] {
   --bg-main: var(--bg-slate);
   --bg-tint: rgba(17, 24, 39, 0.72);
-  --surface-1: rgba(21, 31, 52, 0.9);
-  --surface-2: rgba(27, 39, 65, 0.92);
-  --surface-3: rgba(19, 28, 47, 0.93);
+  --surface-1: rgba(20, 33, 54, 0.9);
+  --surface-2: rgba(27, 42, 68, 0.92);
+  --surface-3: rgba(19, 30, 49, 0.93);
 }
 
 :root[data-background='sunset'] {
   --bg-main: var(--bg-sunset);
-  --bg-tint: rgba(42, 19, 38, 0.72);
-  --surface-1: rgba(54, 21, 46, 0.9);
-  --surface-2: rgba(68, 26, 56, 0.92);
-  --surface-3: rgba(48, 20, 42, 0.93);
+  --bg-tint: rgba(34, 20, 15, 0.72);
+  --surface-1: rgba(44, 26, 20, 0.9);
+  --surface-2: rgba(56, 34, 27, 0.92);
+  --surface-3: rgba(39, 23, 18, 0.93);
 }
 
 :root[data-background='custom'] {
@@ -110,8 +104,13 @@ body {
 }
 
 body {
-  background-image: radial-gradient(circle at top, rgba(168, 85, 247, 0.08), transparent 55%),
-    radial-gradient(circle at 20% 20%, rgba(168, 85, 247, 0.06), transparent 50%);
+  background-image:
+    radial-gradient(circle at 14% -2%, rgba(52, 208, 255, 0.15), transparent 44%),
+    radial-gradient(circle at 86% 0%, rgba(34, 197, 94, 0.12), transparent 40%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(45deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: auto, auto, 46px 46px, 46px 46px;
+  background-position: center, center, 0 0, 23px 23px;
   background-attachment: fixed;
 }
 
@@ -143,10 +142,9 @@ html[data-motion='off'] * {
   }
 }
 
-
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--accent) rgba(255, 255, 255, 0.04);
+  scrollbar-color: color-mix(in srgb, var(--accent) 78%, #ffffff 6%) rgba(255, 255, 255, 0.04);
 }
 
 *::-webkit-scrollbar {
@@ -159,10 +157,9 @@ html[data-motion='off'] * {
 }
 
 *::-webkit-scrollbar-thumb {
-  background-color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 78%, #ffffff 8%);
   border-radius: 10px;
 }
-
 
 .type-badge-overlay {
   position: absolute;

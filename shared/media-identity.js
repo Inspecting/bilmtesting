@@ -354,12 +354,20 @@
           ? record.payload
           : null;
         if (!payload) return null;
-        return {
+        const linkedShareUpdatedAtMs = Number(record.updatedAtMs || payload.updatedAt || 0) || 0;
+        const merged = {
           ...payload,
           linkedShare: true,
           linkedShareItemKey: String(record.itemKey || '').trim(),
           linkedShareSourceEmail: String(record.sourceEmail || payload.linkedShareSourceEmail || '').trim().toLowerCase() || null,
-          linkedShareUpdatedAtMs: Number(record.updatedAtMs || payload.updatedAt || 0) || 0
+          linkedShareUpdatedAtMs
+        };
+        const normalizedUpdatedAt = Math.max(getItemUpdatedAt(merged), linkedShareUpdatedAtMs);
+        if (normalizedUpdatedAt > 0) {
+          merged.updatedAt = normalizedUpdatedAt;
+        }
+        return {
+          ...merged
         };
       })
       .filter(Boolean);
@@ -395,10 +403,26 @@
     const shouldDedupe = options.dedupe !== false;
     const maxItems = Math.max(1, Number(options.limit || 120) || 120);
     const map = new Map();
+    const getMergedItemUpdatedAt = (item) => Math.max(
+      getItemUpdatedAt(item),
+      Number(item?.linkedShareUpdatedAtMs || 0) || 0
+    );
+    const getProgressFieldScore = (item) => {
+      if (!item || typeof item !== 'object') return 0;
+      let score = 0;
+      if ((Number(item.season || 0) || 0) > 0) score += 1;
+      if ((Number(item.episode || 0) || 0) > 0) score += 1;
+      if (String(item.playbackNote || '').trim()) score += 1;
+      return score;
+    };
 
     const addItem = (item, source, index) => {
       const canonical = canonicalize(item) || item;
       if (!canonical || typeof canonical !== 'object') return;
+      const normalizedUpdatedAt = getMergedItemUpdatedAt(canonical);
+      if (normalizedUpdatedAt > 0 && getItemUpdatedAt(canonical) !== normalizedUpdatedAt) {
+        canonical.updatedAt = normalizedUpdatedAt;
+      }
       const key = shouldDedupe ? getMergedListKey(normalizedStorageKey, canonical, index) : `${source}:${index}`;
       if (!key) return;
       const current = map.get(key);
@@ -406,16 +430,25 @@
         map.set(key, canonical);
         return;
       }
-      const currentUpdatedAt = getItemUpdatedAt(current);
-      const nextUpdatedAt = getItemUpdatedAt(canonical);
+      const currentUpdatedAt = getMergedItemUpdatedAt(current);
+      const nextUpdatedAt = getMergedItemUpdatedAt(canonical);
       const currentIsLocal = current.linkedShare !== true;
       const nextIsLocal = canonical.linkedShare !== true;
-      if (nextIsLocal && !currentIsLocal) {
+      if (nextUpdatedAt > currentUpdatedAt) {
         map.set(key, canonical);
         return;
       }
-      if (currentIsLocal && !nextIsLocal) return;
-      if (nextUpdatedAt >= currentUpdatedAt) {
+      if (nextUpdatedAt < currentUpdatedAt) return;
+
+      const currentProgressScore = getProgressFieldScore(current);
+      const nextProgressScore = getProgressFieldScore(canonical);
+      if (nextProgressScore > currentProgressScore) {
+        map.set(key, canonical);
+        return;
+      }
+      if (currentProgressScore > nextProgressScore) return;
+
+      if (nextIsLocal && !currentIsLocal) {
         map.set(key, canonical);
       }
     };
@@ -424,7 +457,7 @@
     linkedItems.forEach((item, index) => addItem(item, 'linked', index));
 
     return [...map.values()]
-      .sort((left, right) => getItemUpdatedAt(right) - getItemUpdatedAt(left))
+      .sort((left, right) => getMergedItemUpdatedAt(right) - getMergedItemUpdatedAt(left))
       .slice(0, maxItems);
   }
 

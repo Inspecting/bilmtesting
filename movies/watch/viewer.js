@@ -213,11 +213,11 @@ let imdbId = null;
 let iframeLoadRequestId = 0;
 let lastIframeLoadAtMs = 0;
 let lastIframeLoadedSrc = '';
-const EMBED_LOAD_TIMEOUTS_MS = IS_MOBILE_DEVICE ? [12000, 17000] : [12000];
-const EMBED_LOAD_TIMEOUT_GRACE_MS = IS_MOBILE_DEVICE ? 1100 : 700;
-const EMBED_LOAD_LATE_WINDOW_MS = IS_MOBILE_DEVICE ? 1300 : 700;
+const EMBED_LOAD_TIMEOUTS_MS = IS_MOBILE_DEVICE ? [12000, 17500, 24500] : [12000, 16500];
+const EMBED_LOAD_TIMEOUT_GRACE_MS = IS_MOBILE_DEVICE ? 1600 : 900;
+const EMBED_LOAD_LATE_WINDOW_MS = IS_MOBILE_DEVICE ? 2400 : 1100;
 const EMBED_LOAD_RESET_DELAY_MS = IS_MOBILE_DEVICE ? 180 : 80;
-const EMBED_MIN_LOAD_TIME_MS = IS_MOBILE_DEVICE ? 280 : 0;
+const EMBED_MIN_LOAD_TIME_MS = IS_MOBILE_DEVICE ? 420 : 0;
 const EMBED_MASTER_COLOR_RETRY_SCHEDULE_MS = [100, 320, 800, 1700, 2800, 4200];
 const EMBEDMASTER_ALLOWED_COMMANDS = new Set(['color1', 'fullscreen']);
 let embedMasterLastColorSent = '';
@@ -543,7 +543,7 @@ async function loadMovieEmbedUrlWithRetry({ requestId, url, server, allowFallbac
 
   if (allowFallback && tryFallbackServerAfterFailure(server)) return;
 
-  setPlayerStatus(`We couldn't load ${serverLabel}. Tap refresh or choose another server.`, 'error');
+  setPlayerStatus(`We couldn't load ${serverLabel} right now.`, 'error');
   console.error('[player] load exhausted', {
     context: 'movie',
     server,
@@ -1032,7 +1032,7 @@ async function loadMovieDetails() {
     const year = details?.startDate?.year || 'N/A';
     mediaTitle.textContent = title;
     mediaMeta.textContent = `${year} • Anime`;
-    document.title = `Bilm 💜 - ${title}`;
+    document.title = `Bilm - ${title}`;
     const animeNumericId = Number(animeId || 0) || 0;
     mediaDetails = {
       id: animeNumericId,
@@ -1080,7 +1080,7 @@ async function loadMovieDetails() {
 
     mediaTitle.textContent = title;
     mediaMeta.textContent = displayDate;
-    document.title = `Bilm 💜 - ${title}`;
+    document.title = `Bilm - ${title}`;
 
     mediaDetails = {
       id: Number(contentId || 0) || 0,

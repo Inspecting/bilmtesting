@@ -99,9 +99,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const lastSyncText = document.getElementById('lastSyncText');
   const manualFirebaseBackupBtn = document.getElementById('manualFirebaseBackupBtn');
   const firebaseBackupAutoText = document.getElementById('firebaseBackupAutoText');
-  const firebaseBackupManualText = document.getElementById('firebaseBackupManualText');
-  const firebaseBackupCadenceText = document.getElementById('firebaseBackupCadenceText');
-  const firebaseBackupCooldownText = document.getElementById('firebaseBackupCooldownText');
 
   const accountLinkPanel = document.getElementById('accountLinkPanel');
   const accountLinkSummaryText = document.getElementById('accountLinkSummaryText');
@@ -487,24 +484,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const loggedIn = Boolean(window.bilmAuth?.getCurrentUser?.());
     const incognitoEnabled = window.bilmTheme?.getSettings?.()?.incognito === true;
     if (firebaseBackupAutoText) {
-      firebaseBackupAutoText.textContent = `Last automatic Firebase backup: ${formatSyncAt(status?.lastAutoBackupAtMs || 0)}`;
-    }
-    if (firebaseBackupManualText) {
-      firebaseBackupManualText.textContent = `Last manual Firebase backup: ${formatSyncAt(status?.lastManualBackupAtMs || 0)}`;
-    }
-    if (firebaseBackupCadenceText) {
-      firebaseBackupCadenceText.textContent = status?.cadenceText
-        || 'Automatic backup runs daily at 12:00 AM (local time), once every 24 hours.';
+      firebaseBackupAutoText.textContent = `Last automatic backup: ${formatSyncAt(status?.lastAutoBackupAtMs || 0)}`;
     }
     const nextManualAtMs = Number(status?.nextManualBackupAtMs || 0);
     const availableNow = status?.manualBackupAvailable !== false;
-    if (firebaseBackupCooldownText) {
-      firebaseBackupCooldownText.textContent = incognitoEnabled
-        ? 'Manual backup is unavailable while incognito is on.'
-        : (availableNow || !nextManualAtMs
-        ? 'Manual backup availability: now'
-        : `Manual backup next available at: ${formatSyncAt(nextManualAtMs)}`);
-    }
     if (manualFirebaseBackupBtn) {
       manualFirebaseBackupBtn.disabled = !loggedIn
         || incognitoEnabled
@@ -688,7 +671,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function getOutgoingPendingLink() {
     const pending = Array.isArray(accountLinkState?.pendingRequests) ? accountLinkState.pendingRequests : [];
-    return pending.find((link) => link?.myRole === 'requester') || null;
+    return (
+      pending.find((link) => {
+        const id = String(link?.id || '').trim();
+        const role = String(link?.myRole || '').trim().toLowerCase();
+        const status = String(link?.status || '').trim().toLowerCase();
+        return Boolean(id) && role === 'requester' && status === 'pending';
+      }) || null
+    );
   }
 
   function deriveIncomingAccountLinkRequests({ links = [], incomingRequests = [], pendingRequests = [] } = {}) {
@@ -749,6 +739,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (cancelPendingAccountLinkBtn) {
           cancelPendingAccountLinkBtn.disabled = true;
           cancelPendingAccountLinkBtn.dataset.linkId = '';
+          cancelPendingAccountLinkBtn.hidden = true;
         }
         return;
       }
@@ -760,6 +751,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (cancelPendingAccountLinkBtn) {
           cancelPendingAccountLinkBtn.disabled = true;
           cancelPendingAccountLinkBtn.dataset.linkId = '';
+          cancelPendingAccountLinkBtn.hidden = true;
         }
         return;
       }
@@ -799,7 +791,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (openAccountLinkModalBtn) openAccountLinkModalBtn.disabled = hasBlockingLink;
       if (editAccountLinkScopesBtn) editAccountLinkScopesBtn.disabled = !activeLink;
       if (unlinkAccountBtn) unlinkAccountBtn.disabled = !activeLink;
-      if (cancelPendingAccountLinkBtn) cancelPendingAccountLinkBtn.disabled = !outgoingPending;
+      if (cancelPendingAccountLinkBtn) {
+        cancelPendingAccountLinkBtn.disabled = !outgoingPending;
+        cancelPendingAccountLinkBtn.hidden = !outgoingPending;
+      }
 
       if (activeLink) {
         if (accountLinkActiveCard) accountLinkActiveCard.hidden = false;
@@ -824,6 +819,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (cancelPendingAccountLinkBtn) {
           cancelPendingAccountLinkBtn.disabled = false;
           cancelPendingAccountLinkBtn.dataset.linkId = String(outgoingPending?.id || '').trim();
+          cancelPendingAccountLinkBtn.hidden = false;
         }
         if (!activeLink) {
           setAccountLinkSummary('You have a pending request. You can cancel it at any time.');
@@ -833,6 +829,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (cancelPendingAccountLinkBtn) {
           cancelPendingAccountLinkBtn.disabled = true;
           cancelPendingAccountLinkBtn.dataset.linkId = '';
+          cancelPendingAccountLinkBtn.hidden = true;
         }
       }
 
@@ -1198,9 +1195,10 @@ document.addEventListener('DOMContentLoaded', () => {
     usernameInput.value = user?.displayName || '';
     if (!loggedIn) {
       setAccountLinkSummary('Sign in to request, approve, or manage account links.');
-      if (accountLinkActiveCard) accountLinkActiveCard.hidden = true;
-      if (accountLinkPendingCard) accountLinkPendingCard.hidden = true;
-      if (accountLinkIncomingCard) accountLinkIncomingCard.hidden = true;
+    if (accountLinkActiveCard) accountLinkActiveCard.hidden = true;
+    if (accountLinkPendingCard) accountLinkPendingCard.hidden = true;
+    if (accountLinkIncomingCard) accountLinkIncomingCard.hidden = true;
+    if (cancelPendingAccountLinkBtn) cancelPendingAccountLinkBtn.hidden = true;
     }
     if (resetStatusText) {
       resetStatusText.textContent = loggedIn
@@ -1758,18 +1756,18 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       await ensureAuthReady();
       if (!window.bilmAuth?.runManualFirebaseBackup) {
-        throw new Error('Manual Firebase backup is unavailable right now.');
+        throw new Error('Backup is unavailable right now.');
       }
       manualFirebaseBackupBtn.disabled = true;
-      statusText.textContent = 'Running manual Firebase backup...';
+      statusText.textContent = 'Running backup...';
       await window.bilmAuth.runManualFirebaseBackup({
         reason: 'manual-account-sync',
         source: 'settings-account'
       });
-      statusText.textContent = 'Manual Firebase backup completed.';
+      statusText.textContent = 'Backup completed.';
       refreshFirebaseBackupStatus();
     } catch (error) {
-      statusText.textContent = `Manual Firebase backup failed: ${error.message}`;
+      statusText.textContent = `Backup failed: ${error.message}`;
       refreshFirebaseBackupStatus();
     } finally {
       window.setTimeout(() => {

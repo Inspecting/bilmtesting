@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bilm 💜 - Account Settings</title>
+  <title>Bilm - Account Settings</title>
   <meta name="theme-color" content="#0a0a0a" />
   <link rel="manifest" href="../../manifest.json" />
   <link rel="apple-touch-icon" href="../../icon.png" />
@@ -20,7 +20,7 @@
     <section class="account-shell">
       <header class="account-header">
         <h1>Account Settings</h1>
-        <p>Manage sign-in, sync, sharing, backups, profile display, and account safety.</p>
+        <p>Control sign-in, sync, sharing, backups, profile display, and account safety from one clean dashboard.</p>
       </header>
 
       <nav class="account-quick-nav" aria-label="Account settings sections">
@@ -61,12 +61,9 @@
         </label>
         <p id="lastSyncText" class="muted">Last successful sync: Never</p>
         <div class="actions">
-          <button id="manualFirebaseBackupBtn" class="btn btn-outline" type="button">Manual Firebase Backup</button>
+          <button id="manualFirebaseBackupBtn" class="btn btn-outline" type="button">Backup</button>
         </div>
-        <p id="firebaseBackupAutoText" class="muted">Last automatic Firebase backup: Never</p>
-        <p id="firebaseBackupManualText" class="muted">Last manual Firebase backup: Never</p>
-        <p id="firebaseBackupCadenceText" class="muted">Automatic backup runs daily at 12:00 AM (local time), once every 24 hours.</p>
-        <p id="firebaseBackupCooldownText" class="muted">Manual backup availability: now</p>
+        <p id="firebaseBackupAutoText" class="muted">Last automatic backup: Never</p>
       </section>
 
       <section class="panel account-link-panel" id="accountLinkPanel">
@@ -103,7 +100,7 @@
           <h3>Pending Request</h3>
           <p id="accountLinkPendingText" class="muted">No pending request.</p>
           <div class="actions">
-            <button id="cancelPendingAccountLinkBtn" class="btn btn-outline" type="button">Cancel Request</button>
+            <button id="cancelPendingAccountLinkBtn" class="btn btn-outline" type="button" hidden>Cancel Request</button>
           </div>
         </div>
         <div id="accountLinkIncomingCard" class="account-link-card" hidden>

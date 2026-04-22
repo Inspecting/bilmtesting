@@ -59,9 +59,9 @@ function withBase(path) {
   ];
   const INCOGNITO_PREFIXES = ['bilm-tv-progress-'];
   const DEFAULT_SETTINGS = {
-    accent: '#a855f7',
+    accent: '#34d0ff',
     background: 'deep',
-    customBackground: '#0b0b14',
+    customBackground: '#050b13',
     motion: true,
     particles: true,
     loading: true,
@@ -73,12 +73,12 @@ function withBase(path) {
   };
 
   const backgroundColors = {
-    deep: '#0b0b14',
-    midnight: '#05050b',
-    velvet: '#120818',
-    aurora: '#062a2a',
+    deep: '#050b13',
+    midnight: '#020710',
+    velvet: '#140918',
+    aurora: '#052329',
     slate: '#111827',
-    sunset: '#2a1326'
+    sunset: '#22140f'
   };
 
   const hexToRgb = (hex) => {

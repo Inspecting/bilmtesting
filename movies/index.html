@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bilm 💜 - Movies</title>
+  <title>Bilm - Movies</title>
 
   <!-- PWA & iOS fullscreen support -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -37,7 +37,12 @@
 <script src="../shared/navbar.js"></script>
 
 <!-- Movie sections rendered here -->
-<main>
+<main class="catalog-main">
+  <section class="catalog-hero" aria-label="Movies hub">
+    <p class="catalog-eyebrow">Movies</p>
+    <h1>Movie Hub</h1>
+    <p>Browse curated rows, switch to anime mode when needed, and use filters for precise picks.</p>
+  </section>
   <div class="content-mode-toggle" role="tablist" aria-label="Content mode">
     <button id="regularModeButton" class="mode-toggle-button is-active" type="button" data-mode="regular" role="tab" aria-selected="true">Regular</button>
     <button id="animeModeButton" class="mode-toggle-button" type="button" data-mode="anime" role="tab" aria-selected="false">Anime</button>

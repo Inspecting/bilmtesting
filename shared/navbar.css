@@ -25,8 +25,8 @@
   justify-content: flex-start;
   gap: 10px;
   padding: 10px 44px 10px 14px;
-  background: color-mix(in srgb, var(--surface-3) 90%, var(--accent-soft) 10%);
-  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+  background: color-mix(in srgb, var(--surface-3) 86%, var(--accent-soft) 14%);
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
   border-radius: 12px;
   box-shadow: 0 10px 26px color-mix(in srgb, var(--bg-main) 55%, transparent);
   color: var(--text-primary);
@@ -54,7 +54,7 @@
   color: var(--text-muted);
   width: 26px;
   height: 26px;
-  border-radius: 6px;
+  border-radius: 999px;
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
@@ -86,19 +86,21 @@
 }
 
 header {
-  background-color: var(--surface-3);
-  box-shadow: 0 8px 20px color-mix(in srgb, var(--bg-main) 45%, transparent);
+  background: color-mix(in srgb, var(--surface-3) 92%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--bg-main) 54%, transparent);
   position: relative;
   z-index: 1000;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
 }
 
 .navbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  max-width: 1200px;
-  padding: 12px 24px;
+  max-width: 1240px;
+  min-height: 66px;
+  padding: 10px 24px;
   margin: 0 auto;
   gap: 12px;
 }
@@ -111,10 +113,11 @@ header {
   display: flex;
   align-items: center;
   color: var(--text-primary);
-  font-size: 24px;
-  font-weight: 600;
+  font-size: 25px;
+  font-weight: 700;
   text-decoration: none;
-  gap: 4px;
+  gap: 6px;
+  letter-spacing: 0.02em;
 }
 
 .logo .heart-icon {
@@ -140,31 +143,40 @@ nav {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 20px;
+  gap: 10px;
 }
 
 nav button {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: clamp(13px, 1.25vw, 16px);
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  color: color-mix(in srgb, var(--text-muted) 80%, var(--text-primary) 20%);
+  font-size: clamp(12px, 1.1vw, 14px);
   font-weight: 600;
   cursor: pointer;
-  padding: clamp(5px, 0.7vw, 6px) clamp(8px, 1.2vw, 12px);
-  border-radius: 8px;
-  transition: color var(--transition-fast), background-color var(--transition-fast), box-shadow var(--transition-fast);
+  min-height: 34px;
+  padding: clamp(5px, 0.7vw, 6px) clamp(10px, 1.2vw, 14px);
+  border-radius: 999px;
+  transition:
+    color var(--transition-fast),
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast),
+    border-color var(--transition-fast),
+    transform var(--transition-fast);
 }
 
 nav button:hover {
   color: var(--text-primary);
-  background-color: var(--surface-input-soft);
-  box-shadow: 0 0 12px var(--accent-soft);
+  background-color: color-mix(in srgb, var(--accent) 15%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 74%, transparent);
+  transform: translateY(-1px);
 }
 
 nav button.active {
-  color: var(--accent);
-  background-color: var(--surface-input-soft);
-  box-shadow: 0 0 12px var(--accent-glow);
+  color: var(--text-primary);
+  background-color: color-mix(in srgb, var(--accent) 24%, var(--surface-2));
+  border-color: color-mix(in srgb, var(--accent) 78%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 70%, transparent);
 }
 
 .search-wrapper {
@@ -182,10 +194,10 @@ nav button.active {
 .search-input {
   width: 100%;
   box-sizing: border-box;
-  background-color: var(--surface-input);
+  background-color: color-mix(in srgb, var(--surface-input) 92%, transparent);
   color: var(--text-primary);
-  border: 1px solid transparent;
-  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
+  border-radius: 999px;
   padding: 8px 32px 8px 36px;
   font-size: 14px;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -193,8 +205,8 @@ nav button.active {
 
 .search-input:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 10px var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 68%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 74%, transparent);
 }
 
 .search-icon {
@@ -248,19 +260,22 @@ nav button.active {
 
 .account-btn {
   margin-left: 10px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface-input-soft);
+  min-height: 36px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: linear-gradient(140deg, color-mix(in srgb, var(--surface-2) 90%, transparent), color-mix(in srgb, var(--surface-2) 82%, var(--accent-soft) 18%));
   color: var(--text-primary);
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 13px;
   cursor: pointer;
-  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast), background-color var(--transition-fast);
 }
 
 .account-btn:hover {
-  border-color: var(--accent);
-  box-shadow: 0 0 12px var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-soft) 68%, transparent);
+  transform: translateY(-1px);
 }
 
 .account-menu-wrap {
@@ -290,7 +305,7 @@ nav button.active {
   width: 100%;
   text-align: left;
   border: 1px solid transparent;
-  background: var(--surface-input-soft);
+  background: color-mix(in srgb, var(--surface-2) 88%, var(--accent-soft) 12%);
   color: var(--text-primary);
   border-radius: 8px;
   padding: 8px 10px;
@@ -300,8 +315,8 @@ nav button.active {
 }
 
 .account-menu-item:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 58%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-soft) 74%, transparent);
 }
 
 .account-menu-item:disabled {

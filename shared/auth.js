@@ -2950,7 +2950,7 @@
           getItemUpdatedAt(nextItem),
           recordUpdatedAtMs
         );
-        if (candidateUpdatedAtMs > 0 && getItemUpdatedAt(nextItem) <= 0) {
+        if (candidateUpdatedAtMs > 0 && getItemUpdatedAt(nextItem) !== candidateUpdatedAtMs) {
           nextItem.updatedAt = candidateUpdatedAtMs;
         }
 

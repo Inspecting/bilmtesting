@@ -1567,6 +1567,81 @@ test('linked share cache merges into home lists without exporting partner data',
   expect(exported).not.toContain('bilm-linked-share-cache-v1');
 });
 
+test('linked share merge uses fresher partner continue-watching progress for same title', async ({ page }) => {
+  await mockAuthScript(page, { loggedIn: true, email: 'tester@watchbilm.org' });
+  const now = Date.now();
+  await setLocalJson(page, 'bilm-continue-watching', [
+    {
+      provider: 'tmdb',
+      type: 'tv',
+      key: 'tmdb:tv:101',
+      id: 101,
+      tmdbId: 101,
+      title: 'Shared Show',
+      poster: 'https://via.placeholder.com/140x210?text=Local',
+      link: '/tv/show.html?id=101',
+      season: 1,
+      episode: 2,
+      updatedAt: now - 10_000
+    },
+    {
+      provider: 'tmdb',
+      type: 'movie',
+      key: 'tmdb:movie:202',
+      id: 202,
+      tmdbId: 202,
+      title: 'Second Item',
+      poster: 'https://via.placeholder.com/140x210?text=Second',
+      link: '/movies/show.html?id=202',
+      updatedAt: now - 3_000
+    }
+  ]);
+  await setLocalJson(page, 'bilm-linked-share-cache-v1', {
+    schema: 'bilm-linked-share-cache-v1',
+    version: 1,
+    updatedAtMs: now,
+    linkSignature: 'link-test:continue',
+    lists: {
+      'bilm-continue-watching': {
+        'tmdb:tv:101': {
+          itemKey: 'tmdb:tv:101',
+          sourceEmail: 'partner@example.com',
+          updatedAtMs: now,
+          payload: {
+            provider: 'tmdb',
+            type: 'tv',
+            key: 'tmdb:tv:101',
+            id: 101,
+            tmdbId: 101,
+            title: 'Shared Show',
+            poster: 'https://via.placeholder.com/140x210?text=Partner',
+            link: '/tv/show.html?id=101',
+            season: 4,
+            episode: 6,
+            updatedAt: now - 20_000
+          }
+        }
+      }
+    }
+  });
+
+  await page.goto('/home/', { waitUntil: 'domcontentloaded' });
+  const merged = await page.evaluate(() => {
+    const own = JSON.parse(localStorage.getItem('bilm-continue-watching') || '[]');
+    return window.BilmLinkedData.getMergedList('bilm-continue-watching', own, {
+      canonicalize: (item) => window.BilmMediaIdentity.canonicalizeStoredItem(item) || item,
+      limit: 120
+    });
+  });
+
+  expect(Array.isArray(merged)).toBe(true);
+  expect(merged.length).toBeGreaterThan(0);
+  expect(merged[0]?.key).toBe('tmdb:tv:101');
+  expect(merged[0]?.season).toBe(4);
+  expect(merged[0]?.episode).toBe(6);
+  expect(Number(merged[0]?.updatedAt || 0)).toBe(now);
+});
+
 test('watch history keeps duplicate rows and delete removes only one entry', async ({ page }) => {
   await mockAuthScript(page, { loggedIn: false });
   const now = Date.now();
