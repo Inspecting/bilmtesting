@@ -29,11 +29,12 @@ main {
 }
 
 .catalog-main {
-  width: 100%;
+  width: min(100%, 1240px);
   margin: 0 auto;
   display: grid;
   align-content: start;
   gap: 16px;
+  min-width: 0;
 }
 
 .catalog-hero {
@@ -72,6 +73,7 @@ main {
 .section {
   margin: 0;
   width: 100%;
+  min-width: 0;
   border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
   border-radius: var(--radius-lg);
   padding: 14px;
@@ -102,7 +104,9 @@ main {
   padding-bottom: 10px;
   scroll-behavior: smooth;
   width: 100%;
-  min-height: 252px;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 248px;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
   touch-action: pan-x;
@@ -223,17 +227,24 @@ main {
 
 .quick-filters {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 10px;
-  overflow: visible;
+  overflow-x: auto;
+  overflow-y: hidden;
   min-height: 44px;
   margin-bottom: 0;
-  padding: 2px 0;
+  max-width: 100%;
+  min-width: 0;
+  padding: 2px 0 8px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
 }
 
 .filter-chip {
   flex: 0 0 auto;
+  white-space: nowrap;
   color: var(--text-primary);
   background: color-mix(in srgb, var(--accent) 14%, var(--surface-2));
   border: 1px solid var(--border);
@@ -531,14 +542,9 @@ body.filters-open {
   }
 
   .quick-filters {
-    flex-wrap: nowrap;
     gap: 8px;
-    overflow-x: auto;
-    overflow-y: visible;
     min-height: 44px;
     padding-bottom: 8px;
-    -webkit-overflow-scrolling: touch;
-    touch-action: pan-x;
   }
 
   .filter-chip {

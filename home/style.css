@@ -34,12 +34,18 @@ main {
   min-width: 0;
   height: calc(100vh - 64px);
   padding: 86px 24px 88px;
-  display: grid;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 20px;
   box-sizing: border-box;
   opacity: 0;
   transition: opacity var(--transition-base);
+}
+
+main > * {
+  min-width: 0;
+  max-width: 100%;
 }
 
 main.visible {
@@ -63,6 +69,7 @@ main.visible {
   z-index: 1;
   width: min(100%, 820px);
   margin: 0 auto;
+  min-width: 0;
   padding: clamp(22px, 3.2vw, 34px);
   border-radius: var(--radius-xl);
   border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
@@ -162,6 +169,7 @@ button.search-btn:hover {
   z-index: 1;
   width: min(100%, 1220px);
   margin: 0 auto;
+  min-width: 0;
   border: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
   border-radius: 16px;
   padding: 16px 16px 14px;
@@ -175,6 +183,7 @@ button.search-btn:hover {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 12px;
+  min-width: 0;
 }
 
 .section-title-row {
@@ -182,6 +191,7 @@ button.search-btn:hover {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .section-title {
@@ -195,6 +205,7 @@ button.search-btn:hover {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .section-btn,
@@ -241,6 +252,7 @@ button.search-btn:hover {
   gap: 8px;
   margin-bottom: 12px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .type-filter-btn {
@@ -267,10 +279,16 @@ button.search-btn:hover {
 .scroll-row {
   display: flex;
   overflow-x: auto;
+  overflow-y: hidden;
   gap: 12px;
   padding-bottom: 8px;
   scroll-behavior: smooth;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x;
 }
 
 .movie-card {
