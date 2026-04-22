@@ -164,6 +164,29 @@ function toSlug(value) {
     .replace(/^-+|-+$/g, '');
 }
 
+function enableHorizontalWheelScroll(container) {
+  if (!container || container.dataset.horizontalWheelBound === 'true') return;
+  container.dataset.horizontalWheelBound = 'true';
+
+  container.addEventListener('wheel', (event) => {
+    if (event.defaultPrevented) return;
+    if (container.scrollWidth <= container.clientWidth + 1) return;
+
+    const absDeltaX = Math.abs(event.deltaX);
+    const absDeltaY = Math.abs(event.deltaY);
+    if (!absDeltaX && !absDeltaY) return;
+
+    const delta = absDeltaY > absDeltaX ? event.deltaY : event.deltaX;
+    if (!delta) return;
+
+    const previousScrollLeft = container.scrollLeft;
+    container.scrollLeft += delta;
+    if (container.scrollLeft !== previousScrollLeft) {
+      event.preventDefault();
+    }
+  }, { passive: false });
+}
+
 function buildCategoryUrl({
   mode = 'regular',
   section = '',
@@ -742,6 +765,8 @@ function createSectionSkeleton(section, container, prefix = '') {
   const rowEl = document.createElement('div');
   rowEl.className = 'scroll-row';
   rowEl.id = `${prefix}row-${section.slug}`;
+  rowEl.tabIndex = 0;
+  enableHorizontalWheelScroll(rowEl);
 
   const statusEl = document.createElement('p');
   statusEl.className = 'section-status';
@@ -758,6 +783,9 @@ function renderQuickFilters(sections, containerId = 'quickFilters') {
   if (!filtersContainer) return;
 
   filtersContainer.innerHTML = '';
+  filtersContainer.scrollLeft = 0;
+  filtersContainer.tabIndex = 0;
+  enableHorizontalWheelScroll(filtersContainer);
   sections.forEach((section) => {
     if (!section.categoryUrl) return;
     const chip = document.createElement('a');
