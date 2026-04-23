@@ -4471,6 +4471,7 @@
       await init();
       const user = auth?.currentUser || currentUser;
       const syncBeforeSignOut = options?.syncBeforeSignOut !== false;
+      const allowUnsyncedSignOut = options?.allowUnsyncedSignOut !== false;
       if (syncBeforeSignOut && user && isSyncEnabled() && !isIncognitoSyncPaused()) {
         try {
           await flushPendingListOperationsToCloud('signout-prep');
@@ -4480,11 +4481,22 @@
             mirrorReason: 'signout'
           });
         } catch (error) {
-          const wrapped = new Error('Sync before sign out failed. Try again.');
+          const wrapped = new Error('Sync before sign out failed. Signing out without final sync.');
           wrapped.code = 'signout_sync_failed';
           wrapped.retryable = true;
           wrapped.cause = error;
-          throw wrapped;
+          emitSyncIssue({
+            scope: 'signout',
+            code: wrapped.code,
+            message: error?.message || wrapped.message,
+            status: error?.status || null,
+            retryable: true,
+            requestId: error?.requestId || null
+          });
+          console.warn('Pre-signout sync failed; continuing sign out:', error);
+          if (!allowUnsyncedSignOut) {
+            throw wrapped;
+          }
         }
       }
       return modules.signOut(auth);

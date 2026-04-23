@@ -1736,11 +1736,22 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!confirm('Sign out of your account?')) return;
       statusText.textContent = 'Syncing before sign out...';
       await window.bilmAuth.signOut();
-      if (getClearOnLogoutSetting()) {
-        await clearAllLocalData();
+      const clearOnLogout = getClearOnLogoutSetting();
+      let clearLocalDataError = null;
+      if (clearOnLogout) {
+        try {
+          await clearAllLocalData();
+        } catch (error) {
+          clearLocalDataError = error;
+          console.warn('Signed out, but local data clear failed:', error);
+        }
       }
       transferStatusText.textContent = 'Signed out successfully.';
-      statusText.textContent = getClearOnLogoutSetting() ? 'Signed out and cleared local data.' : 'Signed out without clearing local data.';
+      if (clearOnLogout && clearLocalDataError) {
+        statusText.textContent = 'Signed out, but local data could not be fully cleared.';
+      } else {
+        statusText.textContent = clearOnLogout ? 'Signed out and cleared local data.' : 'Signed out without clearing local data.';
+      }
       setTimeout(() => location.reload(), 200);
     } catch (error) {
       statusText.textContent = `Sign out failed: ${error.message}`;

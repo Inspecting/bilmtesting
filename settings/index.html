@@ -1698,12 +1698,22 @@
       cloudStatus.textContent = 'Syncing before log out...';
       await window.bilmAuth.signOut();
       const clearOnLogout = localStorage.getItem(CLEAR_ON_LOGOUT_KEY) !== '0';
+      let clearLocalDataError = null;
       if (clearOnLogout) {
-        await clearAllLocalData();
+        try {
+          await clearAllLocalData();
+        } catch (error) {
+          clearLocalDataError = error;
+          console.warn('Logged out, but local data clear failed:', error);
+        }
       }
-      cloudStatus.textContent = clearOnLogout
-        ? 'Logged out and cleared local data. Reloading...'
-        : 'Logged out without clearing local data. Reloading...';
+      if (clearOnLogout && clearLocalDataError) {
+        cloudStatus.textContent = 'Logged out, but local data could not be fully cleared. Reloading...';
+      } else {
+        cloudStatus.textContent = clearOnLogout
+          ? 'Logged out and cleared local data. Reloading...'
+          : 'Logged out without clearing local data. Reloading...';
+      }
       setTimeout(() => location.reload(), 250);
     } catch (err) {
       cloudStatus.textContent = `Logout failed: ${err.message}`;
