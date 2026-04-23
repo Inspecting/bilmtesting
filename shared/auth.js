@@ -700,15 +700,13 @@
     [EXTRA_SYNC_SECTOR_KEYS.ui_prefs]: 6000
   });
   const STORAGE_KEY_TO_SECTOR_CONFIG = Object.freeze({
-    'bilm-theme-settings': { sectorKey: EXTRA_SYNC_SECTOR_KEYS.settings_profile, itemKey: 'theme_settings' },
     'bilm-playback-note': { sectorKey: EXTRA_SYNC_SECTOR_KEYS.playback_notes, itemKey: 'playback_note' },
     'bilm-new-season-seen': { sectorKey: EXTRA_SYNC_SECTOR_KEYS.ui_prefs, itemKey: 'new_season_seen' },
     'bilm-history-page-prefs': { sectorKey: EXTRA_SYNC_SECTOR_KEYS.ui_prefs, itemKey: 'history_page_prefs' },
     bilmDisableLoading: { sectorKey: EXTRA_SYNC_SECTOR_KEYS.ui_prefs, itemKey: 'disable_loading' }
   });
   const STORAGE_KEY_PREFIX_TO_SECTOR_CONFIG = Object.freeze([
-    { prefix: 'bilm-tv-progress-', sectorKey: EXTRA_SYNC_SECTOR_KEYS.tv_progress, itemKeyFromKey: (key) => key },
-    { prefix: 'theme-', sectorKey: EXTRA_SYNC_SECTOR_KEYS.settings_profile, itemKeyFromKey: (key) => key }
+    { prefix: 'bilm-tv-progress-', sectorKey: EXTRA_SYNC_SECTOR_KEYS.tv_progress, itemKeyFromKey: (key) => key }
   ]);
   const DEVICE_LOCAL_STORAGE_KEYS = new Set([
     SYNC_ENABLED_KEY,
@@ -1153,9 +1151,16 @@
     return SECTOR_KEY_TO_LIST_KEY[normalized] || '';
   }
 
+  function isThemeStorageKey(storageKey = '') {
+    const normalized = String(storageKey || '').trim();
+    if (!normalized) return false;
+    return normalized === THEME_SETTINGS_KEY || normalized.startsWith('theme-');
+  }
+
   function resolveStorageSectorConfig(storageKey) {
     const key = String(storageKey || '').trim();
     if (!key) return null;
+    if (isThemeStorageKey(key)) return null;
     if (DEVICE_LOCAL_STORAGE_KEYS.has(key)) return null;
     if (key === SYNC_META_KEY || key === SYNC_DEVICE_ID_KEY) return null;
     const exact = STORAGE_KEY_TO_SECTOR_CONFIG[key];
@@ -1231,12 +1236,14 @@
     const value = operation?.payload?.value;
     const deleted = operation?.deleted === true;
     if (!deleted && !storageKey) return null;
+    const resolvedStorageKey = deleted ? itemKey : storageKey;
+    if (isThemeStorageKey(resolvedStorageKey)) return null;
     return {
       sectorKey,
       itemKey,
       deleted,
       updatedAtMs: normalizeOperationUpdatedAt(operation?.updatedAtMs, 0, { context: 'sync-op:to-storage' }),
-      storageKey: deleted ? itemKey : storageKey,
+      storageKey: resolvedStorageKey,
       value: deleted ? null : (typeof value === 'string' ? value : JSON.stringify(value ?? ''))
     };
   }
@@ -2075,6 +2082,7 @@
     const normalizedKey = String(key || '').trim();
     if (!normalizedKey) return true;
     if (LOCAL_ONLY_SYNC_EXCLUDED_KEYS.has(normalizedKey)) return true;
+    if (isThemeStorageKey(normalizedKey)) return true;
     if (normalizedKey.startsWith('debug-')) return true;
     if (normalizedKey.startsWith('bilm-incognito-')) return true;
     return false;
@@ -2086,7 +2094,8 @@
 
   function captureLocalOnlyStorageState() {
     const captured = {};
-    LOCAL_ONLY_LOCAL_STORAGE_KEYS.forEach((key) => {
+    Object.keys(localStorage).forEach((key) => {
+      if (!isLocalOnlyStorageKey(key) && !isThemeStorageKey(key)) return;
       const value = localStorage.getItem(key);
       if (value !== null) {
         captured[key] = value;
@@ -2149,7 +2158,7 @@
     });
     Object.entries(localState).forEach(([storageKey, value]) => {
       if (Object.prototype.hasOwnProperty.call(essential, storageKey)) return;
-      if (storageKey.startsWith('bilm-tv-progress-') || storageKey.startsWith('theme-')) {
+      if (storageKey.startsWith('bilm-tv-progress-')) {
         essential[storageKey] = value;
       }
     });
