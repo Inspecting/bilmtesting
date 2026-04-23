@@ -751,6 +751,116 @@
     }
   }
 
+  function shouldPreserveAuthStorageKey(key = '') {
+    const normalized = String(key || '').trim();
+    if (!normalized) return false;
+    if (normalized.startsWith('firebase:')) return true;
+    if (normalized.startsWith('__firebase')) return true;
+    return false;
+  }
+
+  function captureStorageEntries(storage, predicate) {
+    const entries = [];
+    if (!storage || typeof predicate !== 'function') return entries;
+    Object.keys(storage).forEach((key) => {
+      if (!predicate(key)) return;
+      const value = storage.getItem(key);
+      if (value === null) return;
+      entries.push([key, value]);
+    });
+    return entries;
+  }
+
+  function restoreStorageEntries(storage, entries = []) {
+    if (!storage || !Array.isArray(entries)) return;
+    entries.forEach(([key, value]) => {
+      if (typeof key !== 'string') return;
+      if (typeof value !== 'string') return;
+      try {
+        storage.setItem(key, value);
+      } catch (error) {
+        console.warn('Storage restore skipped:', error);
+      }
+    });
+  }
+
+  async function clearLocalSiteData({
+    preserveAuthPersistence = false,
+    clearCookies = !preserveAuthPersistence,
+    clearIndexedDb = true,
+    clearCaches = true
+  } = {}) {
+    await withMutationSuppressed(async () => {
+      const preserveAuth = preserveAuthPersistence === true;
+      const preservedLocalEntries = preserveAuth
+        ? captureStorageEntries(localStorage, shouldPreserveAuthStorageKey)
+        : [];
+      const preservedSessionEntries = preserveAuth
+        ? captureStorageEntries(sessionStorage, shouldPreserveAuthStorageKey)
+        : [];
+
+      try {
+        localStorage.clear();
+      } catch (error) {
+        console.warn('Local storage clear failed:', error);
+      }
+      try {
+        sessionStorage.clear();
+      } catch (error) {
+        console.warn('Session storage clear failed:', error);
+      }
+
+      if (preserveAuth) {
+        restoreStorageEntries(localStorage, preservedLocalEntries);
+        restoreStorageEntries(sessionStorage, preservedSessionEntries);
+      }
+
+      if (clearCookies) {
+        const cookieSource = String(document.cookie || '');
+        if (cookieSource) {
+          cookieSource.split(';').forEach((cookie) => {
+            const eqPos = cookie.indexOf('=');
+            const name = eqPos > -1 ? cookie.slice(0, eqPos).trim() : cookie.trim();
+            if (!name) return;
+            document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+          });
+        }
+      }
+
+      if (clearIndexedDb && window.indexedDB?.databases) {
+        try {
+          const databases = await window.indexedDB.databases();
+          await Promise.all((databases || []).map((db) => new Promise((resolve) => {
+            const dbName = String(db?.name || '').trim();
+            if (!dbName) {
+              resolve();
+              return;
+            }
+            if (preserveAuth && dbName.toLowerCase().startsWith('firebase')) {
+              resolve();
+              return;
+            }
+            const request = window.indexedDB.deleteDatabase(dbName);
+            request.onsuccess = () => resolve();
+            request.onerror = () => resolve();
+            request.onblocked = () => resolve();
+          })));
+        } catch (error) {
+          console.warn('IndexedDB clear failed:', error);
+        }
+      }
+
+      if (clearCaches && window.caches?.keys) {
+        try {
+          const cacheKeys = await window.caches.keys();
+          await Promise.all((cacheKeys || []).map((cacheKey) => window.caches.delete(cacheKey)));
+        } catch (error) {
+          console.warn('Cache storage clear failed:', error);
+        }
+      }
+    });
+  }
+
   function recordSyncActivity() {
     lastUserActivityAt = Date.now();
     if (document.visibilityState !== 'hidden') {
@@ -3668,12 +3778,13 @@
     }
   }
 
-  async function syncListsFromCloudNow() {
+  async function syncListsFromCloudNow(options = {}) {
     await init();
     const user = auth?.currentUser;
+    const forceRun = options?.forceRun === true;
     if (!user || !isSyncEnabled() || transferApiDisabled) return false;
     if (isIncognitoSyncPaused()) return false;
-    if (isSyncTemporarilyPaused()) return false;
+    if (!forceRun && isSyncTemporarilyPaused()) return false;
 
     const userId = getTransferUserId(user);
     let sinceMs = getListSyncCursorMs();
@@ -3996,8 +4107,10 @@
   async function syncFromCloudNow(options = {}) {
     await init();
     const user = auth?.currentUser;
+    const forceRun = options?.forceRun === true;
+    const throwOnError = options?.throwOnError === true;
     if (isIncognitoSyncPaused()) return false;
-    if (isSyncTemporarilyPaused()) {
+    if (!forceRun && isSyncTemporarilyPaused()) {
       scheduleSyncPauseRecheck();
       return false;
     }
@@ -4011,7 +4124,7 @@
 
     let listSyncApplied = false;
     try {
-      listSyncApplied = await syncListsFromCloudNow();
+      listSyncApplied = await syncListsFromCloudNow({ forceRun });
     } catch (error) {
       console.warn('Incremental list sync failed:', error);
       emitSyncIssue({
@@ -4022,6 +4135,9 @@
         retryable: error?.retryable !== false,
         requestId: error?.requestId || null
       });
+      if (throwOnError) {
+        throw error;
+      }
     }
     if (!listSyncApplied && !snapshotRecoveryCheckedThisSession && user && isSyncEnabled() && !hasLocalMergeableData()) {
       snapshotRecoveryCheckedThisSession = true;
@@ -4297,6 +4413,121 @@
     return { user, userId };
   }
 
+  function normalizeSnapshotForCloudSave(snapshot) {
+    const baseSnapshot = snapshot && snapshot.schema === 'bilm-backup-v1'
+      ? snapshot
+      : collectBackupData();
+    return {
+      ...(baseSnapshot || {}),
+      meta: {
+        ...(baseSnapshot?.meta || {}),
+        updatedAtMs: Date.now(),
+        deviceId: getOrCreateDeviceId(),
+        version: 1
+      }
+    };
+  }
+
+  async function seedNewAccountCloudFromSnapshot(snapshot, { reason = 'signup-initial-seed', source = 'signup' } = {}) {
+    const user = auth?.currentUser || currentUser;
+    if (!user) {
+      return {
+        seeded: false,
+        error: 'Missing authenticated account session after sign up.'
+      };
+    }
+
+    const normalizedSnapshot = normalizeSnapshotForCloudSave(snapshot);
+    try {
+      await api.saveCloudSnapshot(normalizedSnapshot, {
+        mirrorToFirebase: true,
+        mirrorReason: reason
+      });
+      try {
+        await ensureSectorBootstrapForUser(user, { forceCheck: true });
+      } catch (error) {
+        console.warn('Signup bootstrap check failed:', error);
+      }
+      try {
+        await flushPendingListOperationsToCloud(`signup-seed:${source}`);
+      } catch (error) {
+        console.warn('Signup seed push failed:', error);
+      }
+      return {
+        seeded: true,
+        error: null
+      };
+    } catch (error) {
+      emitSyncIssue({
+        scope: 'signup',
+        code: error?.code || error?.error || 'signup_seed_failed',
+        message: error?.message || 'Signed up, but initial cloud seed failed.',
+        status: error?.status || null,
+        retryable: error?.retryable !== false,
+        requestId: error?.requestId || null
+      });
+      return {
+        seeded: false,
+        error: String(error?.message || 'Signed up, but initial cloud seed failed.')
+      };
+    }
+  }
+
+  async function runSignInLocalResetAndSync(source = 'sign-in') {
+    const result = {
+      localDataCleared: false,
+      syncApplied: false,
+      syncOk: false,
+      syncError: null,
+      message: ''
+    };
+
+    try {
+      await clearLocalSiteData({
+        preserveAuthPersistence: true,
+        clearCookies: false,
+        clearIndexedDb: true,
+        clearCaches: true
+      });
+      clearPendingSyncStateForAuthChange(`${source}:local-clear`);
+      snapshotRecoveryCheckedThisSession = false;
+      sectorBootstrapCheckedThisSession = false;
+      result.localDataCleared = true;
+    } catch (error) {
+      emitSyncIssue({
+        scope: 'signin',
+        code: 'signin_local_clear_failed',
+        message: error?.message || 'Signed in, but local data clear failed.',
+        retryable: true
+      });
+      result.syncError = String(error?.message || 'Local data clear failed.');
+    }
+
+    try {
+      result.syncApplied = await syncFromCloudNow({
+        source,
+        forceRun: true,
+        throwOnError: true
+      });
+      result.syncOk = true;
+    } catch (error) {
+      result.syncOk = false;
+      result.syncError = String(error?.message || 'Cloud sync failed after sign in.');
+    }
+
+    if (result.syncOk) {
+      result.message = result.localDataCleared
+        ? 'Logged in. Local data was cleared and cloud sync completed.'
+        : 'Logged in. Cloud sync completed, but local clear was partial.';
+      return result;
+    }
+
+    result.message = result.localDataCleared
+      ? 'Logged in and local data was cleared, but cloud sync failed. Use Manual Sync to retry.'
+      : 'Logged in, but local clear/sync encountered issues. Use Manual Sync to retry.';
+    return result;
+  }
+
   const api = {
     init,
     getFirestore() {
@@ -4304,12 +4535,27 @@
     },
     async signUp(email, password) {
       await init();
-      return withAuthRetry(() => modules.createUserWithEmailAndPassword(auth, String(email || '').trim(), password));
+      const localSnapshot = collectBackupData();
+      const credential = await withAuthRetry(() => modules.createUserWithEmailAndPassword(auth, String(email || '').trim(), password));
+      const seedResult = await seedNewAccountCloudFromSnapshot(localSnapshot, {
+        reason: 'signup-initial-seed',
+        source: 'signup'
+      });
+      return {
+        credential,
+        user: credential?.user || auth?.currentUser || null,
+        seededCloudData: seedResult.seeded === true,
+        seedError: seedResult.error || null,
+        message: seedResult.seeded
+          ? 'Account created. Local data was saved to your new cloud account.'
+          : 'Account created, but saving local data to cloud failed. Use Manual Sync to retry.'
+      };
     },
     async signUpWithUsername({ email, password, username }) {
       await init();
       const cleanedEmail = String(email || '').trim();
       const cleanedUsername = String(username || '').trim();
+      const localSnapshot = collectBackupData();
       const credential = await withAuthRetry(() => modules.createUserWithEmailAndPassword(auth, cleanedEmail, password));
       if (cleanedUsername) {
         await api.setUsername(cleanedUsername);
@@ -4320,16 +4566,40 @@
           updatedAt: modules.serverTimestamp()
         }
       }, { merge: true });
-      return credential;
+      const seedResult = await seedNewAccountCloudFromSnapshot(localSnapshot, {
+        reason: 'signup-initial-seed',
+        source: 'signup-username'
+      });
+      return {
+        credential,
+        user: credential?.user || auth?.currentUser || null,
+        seededCloudData: seedResult.seeded === true,
+        seedError: seedResult.error || null,
+        message: seedResult.seeded
+          ? 'Account created. Local data was saved to your new cloud account.'
+          : 'Account created, but saving local data to cloud failed. Use Manual Sync to retry.'
+      };
     },
     async signIn(email, password) {
       await init();
-      return withAuthRetry(() => modules.signInWithEmailAndPassword(auth, String(email || '').trim(), password));
+      const credential = await withAuthRetry(() => modules.signInWithEmailAndPassword(auth, String(email || '').trim(), password));
+      const syncResult = await runSignInLocalResetAndSync('sign-in');
+      return {
+        credential,
+        user: credential?.user || auth?.currentUser || null,
+        ...syncResult
+      };
     },
     async signInWithIdentifier(identifier, password) {
       await init();
       const resolvedEmail = await resolveEmailFromIdentifier(identifier);
-      return withAuthRetry(() => modules.signInWithEmailAndPassword(auth, resolvedEmail, password));
+      const credential = await withAuthRetry(() => modules.signInWithEmailAndPassword(auth, resolvedEmail, password));
+      const syncResult = await runSignInLocalResetAndSync('sign-in-identifier');
+      return {
+        credential,
+        user: credential?.user || auth?.currentUser || null,
+        ...syncResult
+      };
     },
     async sendPasswordReset(email) {
       await init();
@@ -4476,7 +4746,7 @@
       if (syncBeforeSignOut && user && isSyncEnabled() && !isIncognitoSyncPaused()) {
         try {
           await flushPendingListOperationsToCloud('signout-prep');
-          await syncListsFromCloudNow();
+          await syncListsFromCloudNow({ forceRun: true });
           await api.saveCloudSnapshot(collectBackupData(), {
             mirrorToFirebase: true,
             mirrorReason: 'signout'
@@ -4503,54 +4773,11 @@
       await modules.signOut(auth);
       if (!clearLocalDataOnSignOut) return;
       try {
-        await withMutationSuppressed(async () => {
-          try {
-            localStorage.clear();
-          } catch (error) {
-            console.warn('Local storage clear failed during sign out:', error);
-          }
-          try {
-            sessionStorage.clear();
-          } catch (error) {
-            console.warn('Session storage clear failed during sign out:', error);
-          }
-
-          const cookieSource = String(document.cookie || '');
-          if (cookieSource) {
-            cookieSource.split(';').forEach((cookie) => {
-              const eqPos = cookie.indexOf('=');
-              const name = eqPos > -1 ? cookie.slice(0, eqPos).trim() : cookie.trim();
-              if (!name) return;
-              document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
-            });
-          }
-
-          if (window.indexedDB?.databases) {
-            try {
-              const databases = await window.indexedDB.databases();
-              await Promise.all((databases || []).map((db) => new Promise((resolve) => {
-                if (!db?.name) {
-                  resolve();
-                  return;
-                }
-                const request = window.indexedDB.deleteDatabase(db.name);
-                request.onsuccess = () => resolve();
-                request.onerror = () => resolve();
-                request.onblocked = () => resolve();
-              })));
-            } catch (error) {
-              console.warn('IndexedDB clear failed during sign out:', error);
-            }
-          }
-
-          if (window.caches?.keys) {
-            try {
-              const cacheKeys = await window.caches.keys();
-              await Promise.all((cacheKeys || []).map((cacheKey) => window.caches.delete(cacheKey)));
-            } catch (error) {
-              console.warn('Cache storage clear failed during sign out:', error);
-            }
-          }
+        await clearLocalSiteData({
+          preserveAuthPersistence: false,
+          clearCookies: true,
+          clearIndexedDb: true,
+          clearCaches: true
         });
       } catch (error) {
         emitSyncIssue({
@@ -4744,8 +4971,56 @@
         throw buildIncognitoPausedError('sync now');
       }
       const pushed = await flushPendingListOperationsToCloud(reason);
-      const pulled = await syncListsFromCloudNow();
+      const pulled = await syncListsFromCloudNow({ forceRun: true });
       return pushed || pulled;
+    },
+    async runManualSync(options = {}) {
+      await init();
+      if (isIncognitoSyncPaused()) {
+        throw buildIncognitoPausedError('run manual sync');
+      }
+      await requireAuth();
+      recordSyncActivity();
+      const source = String(options?.source || 'manual').trim() || 'manual';
+      const result = {
+        ok: false,
+        source,
+        pulled: false,
+        pushed: false,
+        pullApplied: false,
+        pushApplied: false,
+        pullError: null,
+        pushError: null
+      };
+
+      try {
+        result.pullApplied = await syncFromCloudNow({
+          source: `manual-sync:${source}`,
+          forceRun: true,
+          throwOnError: true
+        });
+        result.pulled = true;
+      } catch (error) {
+        result.pullError = String(error?.message || 'Cloud pull failed.');
+      }
+
+      try {
+        result.pushApplied = await flushPendingListOperationsToCloud(`manual-sync:${source}`);
+        result.pushed = true;
+      } catch (error) {
+        result.pushError = String(error?.message || 'Cloud push failed.');
+      }
+
+      if (result.pullError || result.pushError) {
+        const detail = [result.pullError, result.pushError].filter(Boolean).join(' ');
+        const error = new Error(detail || 'Manual sync failed.');
+        error.code = 'manual_sync_failed';
+        error.result = result;
+        throw error;
+      }
+
+      result.ok = true;
+      return result;
     },
     async pushSectorOperationsNow(operations = [], reason = 'manual') {
       await init();

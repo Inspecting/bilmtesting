@@ -1586,10 +1586,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const password = loginPassword.value;
       if (!isValidEmail(email)) throw new Error('Enter a valid email address.');
       if (!password) throw new Error('Enter your password.');
-      await window.bilmAuth.signIn(email, password);
+      const loginResult = await window.bilmAuth.signIn(email, password);
       await saveCredentialsForAutofill(email, password);
       closeModal(loginModal);
-      statusText.textContent = 'Logged in.';
+      const loginMessage = String(loginResult?.message || 'Logged in.');
+      statusText.textContent = loginMessage;
+      showToast(loginMessage, loginResult?.syncOk === false ? 'error' : 'success');
     } catch (error) {
       statusText.textContent = `Log in failed: ${error.message}`;
     }
@@ -1617,10 +1619,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const password = signUpPassword.value;
       if (!isValidEmail(email)) throw new Error('Enter a valid email address.');
       if (!password || password.length < 8) throw new Error('Password must be at least 8 characters.');
-      await window.bilmAuth.signUp(email, password);
+      const signUpResult = await window.bilmAuth.signUp(email, password);
       await saveCredentialsForAutofill(email, password);
       closeModal(signUpModal);
-      statusText.textContent = 'Account created.';
+      const signUpMessage = String(signUpResult?.message || 'Account created.');
+      statusText.textContent = signUpMessage;
+      showToast(signUpMessage, signUpResult?.seededCloudData === false ? 'error' : 'success');
     } catch (error) {
       statusText.textContent = `Sign up failed: ${error.message}`;
     }

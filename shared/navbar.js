@@ -653,7 +653,6 @@ function loadToastScript() {
       return;
     }
     if (Date.now() < accountManualSyncCooldownUntil) return;
-    startManualSyncCooldown();
     authApi.noteUserActivity?.('navbar-manual-sync');
     const currentUser = authApi.getCurrentUser?.() || null;
     if (!currentUser) {
@@ -661,14 +660,18 @@ function loadToastScript() {
       showToast('Log in required.', 'error');
       return;
     }
+    startManualSyncCooldown();
     showToast('Syncing...', 'info', 0);
     try {
-      await authApi.syncFromCloudNow?.();
-      await authApi.flushSyncNow?.('navbar-manual-sync');
-      showToast('Sync complete.', 'success');
+      const result = await authApi.runManualSync?.({ source: 'navbar-account-menu' });
+      const pullStatus = result?.pullApplied ? 'pulled updates' : 'no pull changes';
+      const pushStatus = result?.pushApplied ? 'pushed updates' : 'no push changes';
+      showToast(`Sync complete: ${pullStatus}, ${pushStatus}.`, 'success');
     } catch (error) {
       console.warn('Navbar manual sync failed:', error);
-      showToast('Manual sync failed.', 'error');
+      const message = String(error?.message || 'Manual sync failed.');
+      showToast(message, 'error');
+      if (accountMenuHint) accountMenuHint.textContent = message;
     }
   }
 
@@ -828,11 +831,15 @@ function loadToastScript() {
       if (authStatus) authStatus.textContent = authDialogMode === 'signup' ? 'Creating account...' : 'Signing in...';
       try {
         if (authDialogMode === 'signup') {
-          await authApiInstance.signUp?.(email, password);
-          showToast('Account created.', 'success');
+          const signUpResult = await authApiInstance.signUp?.(email, password);
+          const signupMessage = String(signUpResult?.message || 'Account created.');
+          if (authStatus) authStatus.textContent = signupMessage;
+          showToast(signupMessage, signUpResult?.seededCloudData === false ? 'error' : 'success');
         } else {
-          await authApiInstance.signIn?.(email, password);
-          showToast('Logged in.', 'success');
+          const signInResult = await authApiInstance.signIn?.(email, password);
+          const loginMessage = String(signInResult?.message || 'Logged in.');
+          if (authStatus) authStatus.textContent = loginMessage;
+          showToast(loginMessage, signInResult?.syncOk === false ? 'error' : 'success');
         }
         closeAuthModal();
         closeAccountMenu();

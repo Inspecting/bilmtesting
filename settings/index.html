@@ -1729,10 +1729,12 @@
       const password = loginPassword.value;
       if (!isValidEmail(email)) throw new Error('Enter a valid email address.');
       if (!password) throw new Error('Enter your password.');
-      await window.bilmAuth.signIn(email, password);
+      const loginResult = await window.bilmAuth.signIn(email, password);
       await saveCredentialsForAutofill(email, password);
-      cloudStatus.textContent = 'Logged in successfully.';
-      loginStatus.textContent = 'Logged in.';
+      const loginMessage = String(loginResult?.message || 'Logged in.');
+      cloudStatus.textContent = loginMessage;
+      loginStatus.textContent = loginMessage;
+      showToast(loginMessage, loginResult?.syncOk === false ? 'error' : 'success');
       closeLoginModal();
     } catch (err) {
       loginStatus.textContent = `Log in failed: ${err.message}`;
@@ -1746,10 +1748,12 @@
       const password = signUpPassword.value;
       if (!isValidEmail(email)) throw new Error('Enter a valid email address.');
       if (!password || password.length < 8) throw new Error('Password must be at least 8 characters.');
-      await window.bilmAuth.signUp(email, password);
+      const signUpResult = await window.bilmAuth.signUp(email, password);
       await saveCredentialsForAutofill(email, password);
-      cloudStatus.textContent = 'Account created successfully.';
-      signUpStatus.textContent = 'Account created.';
+      const signUpMessage = String(signUpResult?.message || 'Account created.');
+      cloudStatus.textContent = signUpMessage;
+      signUpStatus.textContent = signUpMessage;
+      showToast(signUpMessage, signUpResult?.seededCloudData === false ? 'error' : 'success');
       closeSignUpModal();
     } catch (err) {
       signUpStatus.textContent = `Sign up failed: ${err.message}`;

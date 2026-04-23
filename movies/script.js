@@ -23,19 +23,19 @@ function detectBasePath() {
 
 const ANILIST_GRAPHQL_URL = 'https://storage-api.watchbilm.org/media/anilist';
 const BASE_URL = detectBasePath();
-const moviesPerLoad = 15;
+const ROW_APPEND_COUNT = 5;
+const ROW_MIN_INITIAL_COUNT = 3;
+const TMDB_PAGE_FETCH_SIZE = 20;
 const PRIORITY_SECTION_COUNT = 4;
-const animeMoviesPerLoad = 15;
+const ANIME_PAGE_FETCH_SIZE = 20;
 const ANIME_MOVIE_GENRES = ['Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy', 'Horror', 'Romance', 'Sci-Fi'];
 const VIDSRC_MOVIES_LATEST_API = '/api/vidsrc/latest?type=movies';
 
 let allGenres = [];
 let genresReadyPromise = Promise.resolve([]);
 const genreNameById = new Map();
-const loadedCounts = {};
-const loadedMovieIds = {};
-const animeLoadedCounts = {};
-const animeLoadedIds = {};
+const regularSectionState = new Map();
+const animeSectionState = new Map();
 const API_COOLDOWN_MS = 180;
 const API_MAX_RETRIES = 2;
 const SECTION_API_MAX_RETRIES = 3;
@@ -199,6 +199,49 @@ function enableHorizontalWheelScroll(container) {
       event.preventDefault();
     }
   }, { passive: false });
+}
+
+function getAdaptiveInitialCount(rowEl, fallbackCardWidth = 140) {
+  if (!rowEl) return ROW_MIN_INITIAL_COUNT;
+  const rowWidth = Number(rowEl.clientWidth || 0);
+  if (!Number.isFinite(rowWidth) || rowWidth <= 0) return ROW_MIN_INITIAL_COUNT;
+  const computed = window.getComputedStyle(rowEl);
+  const gap = Number.parseFloat(computed.columnGap || computed.gap || '12') || 12;
+  const sampleCard = rowEl.querySelector('.movie-card');
+  const cardWidth = Number(sampleCard?.getBoundingClientRect?.().width || 0)
+    || Number.parseFloat(sampleCard ? window.getComputedStyle(sampleCard).width : '')
+    || fallbackCardWidth;
+  const visibleCount = Math.floor((rowWidth + gap) / (cardWidth + gap));
+  return Math.max(ROW_MIN_INITIAL_COUNT, visibleCount + 1);
+}
+
+function getOrCreateSectionState(stateMap, sectionSlug) {
+  const key = String(sectionSlug || '').trim();
+  if (!key) {
+    return {
+      nextPage: 1,
+      bufferQueue: [],
+      seenIds: new Set(),
+      exhausted: false,
+      loadingPromise: null
+    };
+  }
+  if (!stateMap.has(key)) {
+    stateMap.set(key, {
+      nextPage: 1,
+      bufferQueue: [],
+      seenIds: new Set(),
+      exhausted: false,
+      loadingPromise: null
+    });
+  }
+  return stateMap.get(key);
+}
+
+function isRowVisibleForAdaptiveTopUp(rowEl) {
+  if (!rowEl) return false;
+  if (rowEl.offsetParent === null) return false;
+  return Number(rowEl.clientWidth || 0) > 0;
 }
 
 function buildCategoryUrl({
@@ -706,7 +749,7 @@ async function fetchMoviesFromVidsrcFallback(page = 1, sectionSeed = '') {
     const normalized = toMovieFallbackResult(entry, details);
     if (!normalized) continue;
     mapped.push(normalized);
-    if (mapped.length >= moviesPerLoad) break;
+    if (mapped.length >= TMDB_PAGE_FETCH_SIZE) break;
   }
   return mapped;
 }
@@ -789,7 +832,7 @@ async function fetchAnimeMoviesByGenre(genre, page = 1) {
   for (const url of anilistUrls) {
     const data = await postJSON(url, {
       query,
-      variables: { page, perPage: animeMoviesPerLoad, genre }
+      variables: { page, perPage: ANIME_PAGE_FETCH_SIZE, genre }
     }, { maxRetries: SECTION_API_MAX_RETRIES });
 
     if (data?.data?.Page?.media?.length) {
@@ -873,126 +916,194 @@ function renderQuickFilters(sections, containerId = 'quickFilters') {
   });
 }
 
-async function loadMoviesForSection(section) {
+async function fillRegularMovieBuffer(section, state) {
+  let fetchPasses = 0;
+  while (!pageRequestController.signal.aborted && !state.exhausted && state.bufferQueue.length === 0 && fetchPasses < 8) {
+    fetchPasses += 1;
+    const page = state.nextPage;
+    state.nextPage += 1;
+    const movies = await fetchMovies(section.endpoint, page, section.slug);
+    if (!movies.length) {
+      state.exhausted = true;
+      break;
+    }
+    movies.forEach((movie) => {
+      const movieId = Number(movie?.id || movie?.tmdb_id || 0) || 0;
+      if (!movieId || state.seenIds.has(movieId)) return;
+      state.seenIds.add(movieId);
+      state.bufferQueue.push(movie);
+    });
+  }
+  return state.bufferQueue.length > 0;
+}
+
+async function fillAnimeMovieBuffer(section, state) {
+  let fetchPasses = 0;
+  while (!pageRequestController.signal.aborted && !state.exhausted && state.bufferQueue.length === 0 && fetchPasses < 8) {
+    fetchPasses += 1;
+    const page = state.nextPage;
+    state.nextPage += 1;
+    const animeMovies = await fetchAnimeMoviesByGenre(section.genre, page);
+    if (!animeMovies.length) {
+      state.exhausted = true;
+      break;
+    }
+    animeMovies.forEach((animeMovie) => {
+      const animeId = Number(animeMovie?.id || 0) || 0;
+      if (!animeId || state.seenIds.has(animeId)) return;
+      state.seenIds.add(animeId);
+      state.bufferQueue.push(animeMovie);
+    });
+  }
+  return state.bufferQueue.length > 0;
+}
+
+async function loadMoviesForSection(section, options = {}) {
   if (pageRequestController.signal.aborted) return false;
   const rowEl = document.getElementById(`row-${section.slug}`);
   const statusEl = rowEl?.closest('.section')?.querySelector('.section-status');
   if (!rowEl || pageRequestController.signal.aborted) return false;
 
-  loadedCounts[section.slug] ??= 0;
-  loadedMovieIds[section.slug] ??= new Set();
+  const state = getOrCreateSectionState(regularSectionState, section.slug);
+  if (state.loadingPromise) {
+    return state.loadingPromise;
+  }
+  const targetCount = Math.max(1, Number.parseInt(options?.targetCount, 10) || ROW_APPEND_COUNT);
+  state.loadingPromise = (async () => {
+    let appendedCount = 0;
 
-  const page = Math.floor(loadedCounts[section.slug] / moviesPerLoad) + 1;
-  const movies = await fetchMovies(section.endpoint, page, section.slug);
-  if (!movies.length) {
-    if (statusEl && !rowEl.children.length) {
-      statusEl.textContent = 'Could not load titles right now. Please refresh in a moment.';
+    while (!pageRequestController.signal.aborted && appendedCount < targetCount) {
+      if (!state.bufferQueue.length) {
+        const hasBufferedItems = await fillRegularMovieBuffer(section, state);
+        if (!hasBufferedItems) break;
+      }
+      const movie = state.bufferQueue.shift();
+      if (!movie) break;
+
+      const movieId = Number(movie?.id || movie?.tmdb_id || 0) || 0;
+      if (!movieId) continue;
+      const poster = movie.poster_path
+        ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`
+        : 'https://via.placeholder.com/140x210?text=No+Image';
+      const genreTokens = (movie.genre_ids || [])
+        .map((genreId) => genreNameById.get(Number(genreId)))
+        .filter(Boolean)
+        .map((genreName) => normalizeFilterToken(genreName));
+
+      const movieData = {
+        tmdbId: movieId,
+        title: movie.title,
+        type: 'movie',
+        year: movie.release_date?.slice(0, 4) || 'N/A',
+        img: poster,
+        link: `${BASE_URL}/movies/show.html?id=${movieId}`,
+        source: movie.__fallbackSource === 'vidsrc' ? 'VidSrc' : 'TMDB',
+        rating: Number.isFinite(Number(movie.vote_average)) ? Number(movie.vote_average) : null
+      };
+
+      const card = createMovieCard(movieData, {
+        genres: genreTokens.join('|'),
+        ageRating: ''
+      });
+      rowEl.appendChild(card);
+      appendedCount += 1;
     }
-    return false;
+
+    if (statusEl) {
+      if (appendedCount > 0) {
+        statusEl.textContent = '';
+      } else if (!rowEl.querySelector('.movie-card')) {
+        statusEl.textContent = 'Could not load titles right now. Please refresh in a moment.';
+      } else if (state.exhausted) {
+        statusEl.textContent = 'No new titles available right now.';
+      }
+    }
+
+    return appendedCount > 0;
+  })();
+
+  try {
+    return await state.loadingPromise;
+  } finally {
+    state.loadingPromise = null;
   }
-
-  const uniqueMovies = movies.filter((movie) => !loadedMovieIds[section.slug].has(movie.id));
-
-  for (const movie of uniqueMovies.slice(0, moviesPerLoad)) {
-    if (pageRequestController.signal.aborted) return false;
-    loadedMovieIds[section.slug].add(movie.id);
-
-    const poster = movie.poster_path
-      ? `https://image.tmdb.org/t/p/w500${movie.poster_path}`
-      : 'https://via.placeholder.com/140x210?text=No+Image';
-    const genreTokens = (movie.genre_ids || [])
-      .map((genreId) => genreNameById.get(Number(genreId)))
-      .filter(Boolean)
-      .map((genreName) => normalizeFilterToken(genreName));
-
-    const movieData = {
-      tmdbId: movie.id,
-      title: movie.title,
-      type: 'movie',
-      year: movie.release_date?.slice(0, 4) || 'N/A',
-      img: poster,
-      link: `${BASE_URL}/movies/show.html?id=${movie.id}`,
-      source: movie.__fallbackSource === 'vidsrc' ? 'VidSrc' : 'TMDB',
-      rating: Number.isFinite(Number(movie.vote_average)) ? Number(movie.vote_average) : null
-    };
-
-    const card = createMovieCard(movieData, {
-      genres: genreTokens.join('|'),
-      ageRating: ''
-    });
-    rowEl.appendChild(card);
-  }
-
-  if (statusEl) {
-    statusEl.textContent = uniqueMovies.length ? '' : 'No new titles available right now.';
-  }
-
-  loadedCounts[section.slug] += moviesPerLoad;
-  return true;
 }
 
-async function loadAnimeMoviesForSection(section) {
+async function loadAnimeMoviesForSection(section, options = {}) {
   if (pageRequestController.signal.aborted) return false;
-  animeLoadedCounts[section.slug] ??= 0;
-  animeLoadedIds[section.slug] ??= new Set();
-
   const rowEl = document.getElementById(`anime-row-${section.slug}`);
   if (!rowEl) return false;
-  const sectionEl = rowEl.closest('.section');
-  const statusEl = sectionEl?.querySelector('.section-status');
+  const statusEl = rowEl.closest('.section')?.querySelector('.section-status');
+  const state = getOrCreateSectionState(animeSectionState, section.slug);
+  if (state.loadingPromise) {
+    return state.loadingPromise;
+  }
+  const targetCount = Math.max(1, Number.parseInt(options?.targetCount, 10) || ROW_APPEND_COUNT);
+  state.loadingPromise = (async () => {
+    let appendedCount = 0;
 
-  const page = Math.floor(animeLoadedCounts[section.slug] / animeMoviesPerLoad) + 1;
-  const animeMovies = await fetchAnimeMoviesByGenre(section.genre, page);
-  if (!animeMovies.length) {
-    if (statusEl && !rowEl.children.length) {
-      statusEl.textContent = 'Could not load anime titles right now. Please try again.';
+    while (!pageRequestController.signal.aborted && appendedCount < targetCount) {
+      if (!state.bufferQueue.length) {
+        const hasBufferedItems = await fillAnimeMovieBuffer(section, state);
+        if (!hasBufferedItems) break;
+      }
+      const animeMovie = state.bufferQueue.shift();
+      if (!animeMovie) break;
+      const animeId = Number(animeMovie?.id || 0) || 0;
+      if (!animeId) continue;
+
+      const animeGenreTokens = (Array.isArray(animeMovie.genres) && animeMovie.genres.length
+        ? animeMovie.genres
+        : [section.genre])
+        .map((genreName) => normalizeFilterToken(genreName));
+
+      const movieData = {
+        tmdbId: animeId,
+        title: animeMovie.title?.english || animeMovie.title?.romaji || 'Untitled',
+        type: 'movie',
+        year: animeMovie.startDate?.year || 'N/A',
+        img: animeMovie.coverImage?.large || animeMovie.coverImage?.medium,
+        link: `${BASE_URL}/movies/show.html?anime=1&aid=${animeId}&type=movie`,
+        source: 'AniList',
+        rating: Number.isFinite(Number(animeMovie.averageScore)) ? Number(animeMovie.averageScore) / 10 : null
+      };
+
+      const card = createMovieCard(movieData, {
+        genres: animeGenreTokens.join('|'),
+        ageRating: 'N/A'
+      });
+      rowEl.appendChild(card);
+      appendedCount += 1;
     }
-    return false;
+
+    if (statusEl) {
+      if (appendedCount > 0) {
+        statusEl.textContent = '';
+      } else if (!rowEl.querySelector('.movie-card')) {
+        statusEl.textContent = 'Could not load anime titles right now. Please try again.';
+      } else if (state.exhausted) {
+        statusEl.textContent = 'No new titles available right now.';
+      }
+    }
+
+    return appendedCount > 0;
+  })();
+
+  try {
+    return await state.loadingPromise;
+  } finally {
+    state.loadingPromise = null;
   }
-
-  const uniqueMovies = animeMovies.filter((m) => !animeLoadedIds[section.slug].has(m.id));
-  const visibleMovies = uniqueMovies.slice(0, animeMoviesPerLoad);
-
-  for (const animeMovie of visibleMovies) {
-    if (pageRequestController.signal.aborted) return false;
-    animeLoadedIds[section.slug].add(animeMovie.id);
-    const animeGenreTokens = (Array.isArray(animeMovie.genres) && animeMovie.genres.length
-      ? animeMovie.genres
-      : [section.genre])
-      .map((genreName) => normalizeFilterToken(genreName));
-
-    const movieData = {
-      tmdbId: animeMovie.id,
-      title: animeMovie.title?.english || animeMovie.title?.romaji || 'Untitled',
-      type: 'movie',
-      year: animeMovie.startDate?.year || 'N/A',
-      img: animeMovie.coverImage?.large || animeMovie.coverImage?.medium,
-      link: `${BASE_URL}/movies/show.html?anime=1&aid=${animeMovie.id}&type=movie`,
-      source: 'AniList',
-      rating: Number.isFinite(Number(animeMovie.averageScore)) ? Number(animeMovie.averageScore) / 10 : null
-    };
-
-    const card = createMovieCard(movieData, {
-      genres: animeGenreTokens.join('|'),
-      ageRating: 'N/A'
-    });
-    rowEl.appendChild(card);
-  }
-
-  if (statusEl) {
-    statusEl.textContent = visibleMovies.length ? '' : 'No new titles available right now.';
-  }
-
-  animeLoadedCounts[section.slug] += animeMoviesPerLoad;
-  return true;
 }
 
 
-async function runSectionScheduler(prioritySections, deferredSections, loaderFn) {
+async function runSectionScheduler(prioritySections, deferredSections, loaderFn, rowPrefix = '') {
   const schedule = [...prioritySections, ...deferredSections];
   for (const [index, section] of schedule.entries()) {
     if (pageRequestController.signal.aborted) break;
-    await loaderFn(section);
+    const rowEl = document.getElementById(`${rowPrefix}row-${section.slug}`);
+    const initialTarget = getAdaptiveInitialCount(rowEl);
+    await loaderFn(section, { targetCount: initialTarget, reason: 'initial-load' });
     if (index < schedule.length - 1) {
       // Intentional UX pacing: start one section roughly every 100ms.
       await sleep(SECTION_LOAD_INTERVAL_MS);
@@ -1009,10 +1120,25 @@ function setupInfiniteScroll(section, loaderFn, rowPrefix = '') {
     if (loading) return;
     if (rowEl.scrollLeft + rowEl.clientWidth >= rowEl.scrollWidth - 300) {
       loading = true;
-      await loaderFn(section);
+      await loaderFn(section, { targetCount: ROW_APPEND_COUNT, reason: 'scroll-append' });
       loading = false;
     }
   }, { passive: true });
+}
+
+function topUpSectionRowsToViewport(sections, loaderFn, rowPrefix = '') {
+  if (!Array.isArray(sections) || typeof loaderFn !== 'function') return;
+  sections.forEach((section) => {
+    const rowEl = document.getElementById(`${rowPrefix}row-${section.slug}`);
+    if (!isRowVisibleForAdaptiveTopUp(rowEl)) return;
+    const desiredCount = getAdaptiveInitialCount(rowEl);
+    const renderedCount = rowEl.querySelectorAll('.movie-card').length;
+    if (renderedCount >= desiredCount) return;
+    const missingCount = desiredCount - renderedCount;
+    loaderFn(section, { targetCount: missingCount, reason: 'viewport-top-up' }).catch((error) => {
+      console.warn(`Viewport top-up failed for section "${section.slug}":`, error);
+    });
+  });
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -1023,19 +1149,36 @@ document.addEventListener('DOMContentLoaded', async () => {
     return;
   }
   initializeFiltersUi();
+  let regularSectionsForResize = [];
+  let animeSectionsForResize = [];
+  let resizeTopUpTimer = null;
+
+  const queueViewportTopUp = () => {
+    if (resizeTopUpTimer) {
+      window.clearTimeout(resizeTopUpTimer);
+      resizeTopUpTimer = null;
+    }
+    resizeTopUpTimer = window.setTimeout(() => {
+      resizeTopUpTimer = null;
+      topUpSectionRowsToViewport(regularSectionsForResize, loadMoviesForSection, '');
+      topUpSectionRowsToViewport(animeSectionsForResize, loadAnimeMoviesForSection, 'anime-');
+    }, 150);
+  };
 
   const ensureAnimeSectionsLoaded = async () => {
     if (animeSectionsBootstrapped || animeSectionsLoadPromise) return animeSectionsLoadPromise;
 
     animeSectionsLoadPromise = (async () => {
       const animeSections = getAnimeMovieSections();
+      animeSectionsForResize = animeSections;
       renderQuickFilters(animeSections, 'animeQuickFilters');
       animeSections.forEach((section) => createSectionSkeleton(section, animeContainer, 'anime-'));
 
       const priorityAnimeSections = animeSections.slice(0, PRIORITY_SECTION_COUNT);
       const deferredAnimeSections = animeSections.slice(PRIORITY_SECTION_COUNT);
-      await runSectionScheduler(priorityAnimeSections, deferredAnimeSections, loadAnimeMoviesForSection);
+      await runSectionScheduler(priorityAnimeSections, deferredAnimeSections, loadAnimeMoviesForSection, 'anime-');
       animeSections.forEach((section) => setupInfiniteScroll(section, loadAnimeMoviesForSection, 'anime-'));
+      queueViewportTopUp();
       animeSectionsBootstrapped = true;
     })().finally(() => {
       animeSectionsLoadPromise = null;
@@ -1051,6 +1194,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await genresReadyPromise;
   if (pageRequestController.signal.aborted) return;
   const sections = getSections();
+  regularSectionsForResize = sections;
 
   renderQuickFilters(sections, 'quickFilters');
   sections.forEach((section) => createSectionSkeleton(section, container));
@@ -1058,9 +1202,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   const prioritySections = sections.slice(0, PRIORITY_SECTION_COUNT);
   const deferredSections = sections.slice(PRIORITY_SECTION_COUNT);
 
-  await runSectionScheduler(prioritySections, deferredSections, loadMoviesForSection);
+  await runSectionScheduler(prioritySections, deferredSections, loadMoviesForSection, '');
 
   sections.forEach((section) => setupInfiniteScroll(section, loadMoviesForSection));
+  queueViewportTopUp();
+  window.addEventListener('resize', queueViewportTopUp, { passive: true });
+  window.addEventListener('orientationchange', queueViewportTopUp);
   refreshFilterUiForCurrentMode();
 });
 

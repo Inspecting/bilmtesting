@@ -33,7 +33,8 @@ function getApiOrigin() {
 }
 
 const APP_ROUTE_PATTERN = /^\/(?:home|movies|tv|search|settings|random|test|shared)(?:\/|$)/i;
-const HOME_ROW_BATCH_SIZE = 24;
+const HOME_ROW_APPEND_SIZE = 5;
+const HOME_ROW_MIN_INITIAL_COUNT = 3;
 const HOME_ROW_RENDER_CHUNK_SIZE = 8;
 
 function normalizeInternalAppPath(pathname = '') {
@@ -570,10 +571,27 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function getRowAdaptiveInitialCount(container) {
+    if (!container) return HOME_ROW_MIN_INITIAL_COUNT;
+    const rowWidth = Number(container.clientWidth || 0);
+    if (!Number.isFinite(rowWidth) || rowWidth <= 0) return HOME_ROW_MIN_INITIAL_COUNT;
+    const computed = window.getComputedStyle(container);
+    const gap = Number.parseFloat(computed.columnGap || computed.gap || '12') || 12;
+    const sampleCard = container.querySelector('.movie-card');
+    const cardWidth = Number(sampleCard?.getBoundingClientRect?.().width || 0)
+      || Number.parseFloat(sampleCard ? window.getComputedStyle(sampleCard).width : '')
+      || 142;
+    const visibleCount = Math.floor((rowWidth + gap) / (cardWidth + gap));
+    return Math.max(HOME_ROW_MIN_INITIAL_COUNT, visibleCount + 1);
+  }
+
   function renderRow(container, items, emptyMessage, section) {
     if (container.__bilmRowObserver) {
       container.__bilmRowObserver.disconnect();
       container.__bilmRowObserver = null;
+    }
+    if (container.__bilmRowSentinel?.isConnected) {
+      container.__bilmRowSentinel.remove();
     }
     container.innerHTML = '';
     if (!items.length) {
@@ -581,6 +599,7 @@ document.addEventListener('DOMContentLoaded', () => {
       empty.className = 'empty-state';
       empty.textContent = emptyMessage || 'Nothing here yet.';
       container.appendChild(empty);
+      container.__bilmRowLoader = null;
       return;
     }
 
@@ -684,10 +703,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let renderedCount = 0;
     const supportsObserver = typeof window.IntersectionObserver === 'function';
-
-    const appendNextBatch = () => {
+    const appendNextBatch = (requestedCount = null) => {
       if (container.__bilmRenderToken !== renderToken) return;
-      const nextItems = items.slice(renderedCount, renderedCount + HOME_ROW_BATCH_SIZE);
+      if (container.__bilmRowObserver) {
+        container.__bilmRowObserver.disconnect();
+        container.__bilmRowObserver = null;
+      }
+      if (container.__bilmRowSentinel?.isConnected) {
+        container.__bilmRowSentinel.remove();
+      }
+      const batchSize = Math.max(
+        1,
+        Number(requestedCount || 0)
+        || (renderedCount === 0 ? getRowAdaptiveInitialCount(container) : HOME_ROW_APPEND_SIZE)
+      );
+      const nextItems = items.slice(renderedCount, renderedCount + batchSize);
       if (!nextItems.length) return;
 
       let index = 0;
@@ -714,9 +744,11 @@ document.addEventListener('DOMContentLoaded', () => {
         sentinel.style.height = '1px';
         sentinel.style.flex = '0 0 auto';
         container.appendChild(sentinel);
+        container.__bilmRowSentinel = sentinel;
 
         if (!supportsObserver) {
           sentinel.remove();
+          container.__bilmRowSentinel = null;
           appendNextBatch();
           return;
         }
@@ -726,6 +758,7 @@ document.addEventListener('DOMContentLoaded', () => {
           observer.disconnect();
           container.__bilmRowObserver = null;
           sentinel.remove();
+          container.__bilmRowSentinel = null;
           appendNextBatch();
         }, {
           root: container,
@@ -740,6 +773,15 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     appendNextBatch();
+    container.__bilmRowLoader = {
+      topUpToViewport() {
+        if (container.__bilmRenderToken !== renderToken) return;
+        const desired = getRowAdaptiveInitialCount(container);
+        const deficit = desired - renderedCount;
+        if (deficit <= 0) return;
+        appendNextBatch(deficit);
+      }
+    };
   }
 
   function sortByRecent(items) {
@@ -863,6 +905,22 @@ document.addEventListener('DOMContentLoaded', () => {
   updateFilterButtons('continue');
   updateFilterButtons('favorites');
   updateFilterButtons('watchLater');
+
+  let rowResizeDebounceTimer = null;
+  const queueRowViewportTopUp = () => {
+    if (rowResizeDebounceTimer) {
+      clearTimeout(rowResizeDebounceTimer);
+      rowResizeDebounceTimer = null;
+    }
+    rowResizeDebounceTimer = setTimeout(() => {
+      rowResizeDebounceTimer = null;
+      [continueItemsRow, favoriteItemsRow, watchLaterItemsRow].forEach((row) => {
+        row?.__bilmRowLoader?.topUpToViewport?.();
+      });
+    }, 180);
+  };
+  window.addEventListener('resize', queueRowViewportTopUp, { passive: true });
+  window.addEventListener('orientationchange', queueRowViewportTopUp);
 
   window.addEventListener('bilm:sync-applied', (event) => {
     const listKeys = Array.isArray(event?.detail?.listKeys) ? event.detail.listKeys : [];
