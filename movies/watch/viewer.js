@@ -214,6 +214,7 @@ let iframeLoadRequestId = 0;
 let lastIframeLoadAtMs = 0;
 let lastIframeLoadedSrc = '';
 const EMBED_LOAD_TIMEOUTS_MS = IS_MOBILE_DEVICE ? [12000, 17500, 24500] : [12000, 16500];
+const EMBEDMASTER_LOAD_TIMEOUTS_MS = IS_MOBILE_DEVICE ? [9000] : [9000];
 const EMBED_LOAD_TIMEOUT_GRACE_MS = IS_MOBILE_DEVICE ? 1600 : 900;
 const EMBED_LOAD_LATE_WINDOW_MS = IS_MOBILE_DEVICE ? 2400 : 1100;
 const EMBED_LOAD_RESET_DELAY_MS = IS_MOBILE_DEVICE ? 180 : 80;
@@ -436,6 +437,13 @@ function getFallbackServer(failedServer) {
   )) || '';
 }
 
+function getEmbedTimeoutSchedule(server) {
+  if (!isAnime && String(server || '').trim() === 'embedmaster') {
+    return EMBEDMASTER_LOAD_TIMEOUTS_MS;
+  }
+  return EMBED_LOAD_TIMEOUTS_MS;
+}
+
 function resolveMovieEmbedRequest() {
   const server = currentServer;
   const url = buildMovieUrl(server);
@@ -465,6 +473,7 @@ function tryFallbackServerAfterFailure(failedServer) {
 async function loadMovieEmbedUrlWithRetry({ requestId, url, server, allowFallback = true }) {
   const requestStartedAtMs = Date.now();
   const loader = window.BilmIframeLoader;
+  const timeoutScheduleMs = getEmbedTimeoutSchedule(server);
   if (!loader?.loadWithRetry) {
     setEmbedIframeSrc(url);
     if (server === 'embedmaster') {
@@ -477,7 +486,7 @@ async function loadMovieEmbedUrlWithRetry({ requestId, url, server, allowFallbac
   const result = await loader.loadWithRetry({
     iframe,
     url,
-    timeoutScheduleMs: EMBED_LOAD_TIMEOUTS_MS,
+    timeoutScheduleMs,
     timeoutGraceMs: EMBED_LOAD_TIMEOUT_GRACE_MS,
     lateLoadWindowMs: EMBED_LOAD_LATE_WINDOW_MS,
     minimumLoadTimeMs: EMBED_MIN_LOAD_TIME_MS,
@@ -490,7 +499,7 @@ async function loadMovieEmbedUrlWithRetry({ requestId, url, server, allowFallbac
         attempt,
         timeoutMs
       });
-      setPlayerStatus(`Loading ${serverLabel} (attempt ${attempt}/${EMBED_LOAD_TIMEOUTS_MS.length})…`);
+      setPlayerStatus(`Loading ${serverLabel} (attempt ${attempt}/${timeoutScheduleMs.length})…`);
     },
     onSuccess: ({ attempt }) => {
       markServerHealth(server, true, 'success');
@@ -547,7 +556,7 @@ async function loadMovieEmbedUrlWithRetry({ requestId, url, server, allowFallbac
   console.error('[player] load exhausted', {
     context: 'movie',
     server,
-    attempts: EMBED_LOAD_TIMEOUTS_MS.length
+    attempts: timeoutScheduleMs.length
   });
 }
 

@@ -259,7 +259,12 @@
     img.src = item.img;
     img.alt = item.title || 'Untitled';
     img.onerror = () => {
-      card.remove();
+      if (img.dataset.fallbackApplied === '1') {
+        img.onerror = null;
+        return;
+      }
+      img.dataset.fallbackApplied = '1';
+      img.src = NO_IMAGE;
     };
 
     const sourceBadge = document.createElement('span');

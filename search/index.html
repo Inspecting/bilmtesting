@@ -365,6 +365,9 @@
           const tvmazePath = parsed.pathname.slice('/media/tvmaze'.length);
           return `https://api.tvmaze.com${tvmazePath}${parsed.search}`;
         }
+        if (parsed.pathname === '/media/omdb') {
+          return `https://www.omdbapi.com/${parsed.search}`;
+        }
       } catch {
         return '';
       }
