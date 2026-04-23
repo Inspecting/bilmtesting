@@ -1317,6 +1317,144 @@
     });
   }
 
+  function isAuthSyncFailure(error) {
+    const status = Number(error?.status || 0) || 0;
+    if (status === 401 || status === 403) return true;
+    const code = String(error?.code || error?.error || '').trim().toLowerCase();
+    return (
+      code === 'missing_token'
+      || code === 'invalid_token'
+      || code === 'token_expired'
+      || code === 'forbidden'
+      || code === 'email_required'
+    );
+  }
+
+  function isOperationsSyncUnavailableError(error) {
+    const status = Number(error?.status || 0) || 0;
+    const code = String(error?.code || error?.error || '').trim().toLowerCase();
+    const message = String(error?.message || '').trim().toLowerCase();
+    if (status === 404 || status === 501 || status === 503) return true;
+    if (
+      code === 'd1_not_configured'
+      || code === 'storage_not_configured'
+      || code === 'route_not_found'
+      || code === 'table_missing'
+      || code === 'sql_error'
+    ) {
+      return true;
+    }
+    return (
+      message.includes('no such table')
+      || message.includes('required for sync endpoints')
+      || message.includes('sync endpoints')
+    );
+  }
+
+  function canAttemptSnapshotFallbackForSyncError(error) {
+    if (!error) return false;
+    if (isAuthSyncFailure(error)) return false;
+    return isOperationsSyncUnavailableError(error) || isRetryableSyncFailure(error);
+  }
+
+  function formatSyncFailureMessage(error, fallback = 'Sync failed.') {
+    const base = String(error?.message || fallback).trim() || fallback;
+    const code = String(error?.code || error?.error || '').trim();
+    const requestId = String(error?.requestId || '').trim();
+    if (code && requestId) {
+      return `${base} (code: ${code}, request: ${requestId})`;
+    }
+    if (code) {
+      return `${base} (code: ${code})`;
+    }
+    if (requestId) {
+      return `${base} (request: ${requestId})`;
+    }
+    return base;
+  }
+
+  async function runSnapshotPullFallback({
+    source = 'sync-fallback',
+    forceApply = false,
+    applyToLocal = true
+  } = {}) {
+    await init();
+    const user = auth?.currentUser || currentUser;
+    if (!user) {
+      return {
+        applied: false,
+        remoteFound: false,
+        snapshot: null,
+        snapshotSource: 'none',
+        selectionReason: 'no_user'
+      };
+    }
+    const userId = getTransferUserId(user);
+    const {
+      transferSnapshot,
+      firestoreSnapshot
+    } = await fetchCloudSnapshotCandidates(user, userId, `snapshot-fallback:${source}`);
+    const selected = choosePreferredCloudSnapshot(transferSnapshot, firestoreSnapshot);
+    const snapshot = selected?.snapshot && selected.snapshot.schema === 'bilm-backup-v1'
+      ? selected.snapshot
+      : null;
+    let applied = false;
+    if (snapshot && applyToLocal) {
+      applied = applyRemoteSnapshot(snapshot, {
+        reason: `snapshot-fallback:${source}`,
+        source: `snapshot-fallback:${selected?.source || 'unknown'}`,
+        force: forceApply
+      });
+    }
+    return {
+      applied,
+      remoteFound: Boolean(snapshot),
+      snapshot,
+      snapshotSource: String(selected?.source || 'none').trim() || 'none',
+      selectionReason: String(selected?.reason || 'no_snapshot').trim() || 'no_snapshot',
+      transferItemCount: Number(selected?.transferItemCount || 0) || 0,
+      firestoreItemCount: Number(selected?.firestoreItemCount || 0) || 0
+    };
+  }
+
+  async function runSnapshotMergeSyncFallback({ source = 'manual-sync-fallback' } = {}) {
+    await init();
+    const user = auth?.currentUser || currentUser;
+    if (!user) {
+      throw new Error('Cloud sync fallback requires a signed-in account.');
+    }
+    const userId = getTransferUserId(user);
+    const localSnapshot = collectBackupData();
+    const pullResult = await runSnapshotPullFallback({
+      source: `${source}:pull`,
+      forceApply: true,
+      applyToLocal: false
+    });
+    const remoteSnapshot = pullResult.snapshot && pullResult.snapshot.schema === 'bilm-backup-v1'
+      ? pullResult.snapshot
+      : null;
+    const mergedSnapshot = normalizeSnapshotForCloudSave(
+      remoteSnapshot
+        ? (mergeSnapshots(localSnapshot, remoteSnapshot) || remoteSnapshot || localSnapshot)
+        : localSnapshot
+    );
+    const applied = applyRemoteSnapshot(mergedSnapshot, {
+      reason: `snapshot-merge:${source}`,
+      source: `snapshot-merge:${pullResult.snapshotSource || 'local'}`,
+      force: true
+    });
+    await saveSnapshotToTransferApi(user, userId, mergedSnapshot);
+    writeSyncMeta({
+      lastCloudPushAt: Date.now(),
+      lastListSyncPushReason: `snapshot-merge:${source}`
+    });
+    return {
+      ...pullResult,
+      applied,
+      pushed: true
+    };
+  }
+
   function emitSyncIssue(issue = {}) {
     const normalized = {
       scope: String(issue?.scope || 'sync').trim() || 'sync',
@@ -4109,6 +4247,7 @@
     const user = auth?.currentUser;
     const forceRun = options?.forceRun === true;
     const throwOnError = options?.throwOnError === true;
+    const allowSnapshotFallback = options?.allowSnapshotFallback === true;
     if (isIncognitoSyncPaused()) return false;
     if (!forceRun && isSyncTemporarilyPaused()) {
       scheduleSyncPauseRecheck();
@@ -4127,6 +4266,22 @@
       listSyncApplied = await syncListsFromCloudNow({ forceRun });
     } catch (error) {
       console.warn('Incremental list sync failed:', error);
+      let fallbackApplied = false;
+      if (allowSnapshotFallback && canAttemptSnapshotFallbackForSyncError(error)) {
+        try {
+          const fallback = await runSnapshotPullFallback({
+            source: String(options?.source || 'sync-from-cloud').trim() || 'sync-from-cloud',
+            forceApply: forceRun,
+            applyToLocal: true
+          });
+          fallbackApplied = fallback.applied === true;
+          if (fallbackApplied) {
+            listSyncApplied = true;
+          }
+        } catch (fallbackError) {
+          console.warn('Snapshot pull fallback failed:', fallbackError);
+        }
+      }
       emitSyncIssue({
         scope: 'sync',
         code: error?.code || error?.error || 'sector_pull_failed',
@@ -4135,7 +4290,7 @@
         retryable: error?.retryable !== false,
         requestId: error?.requestId || null
       });
-      if (throwOnError) {
+      if (throwOnError && !fallbackApplied) {
         throw error;
       }
     }
@@ -4507,12 +4662,13 @@
       result.syncApplied = await syncFromCloudNow({
         source,
         forceRun: true,
-        throwOnError: true
+        throwOnError: true,
+        allowSnapshotFallback: true
       });
       result.syncOk = true;
     } catch (error) {
       result.syncOk = false;
-      result.syncError = String(error?.message || 'Cloud sync failed after sign in.');
+      result.syncError = formatSyncFailureMessage(error, 'Cloud sync failed after sign in.');
     }
 
     if (result.syncOk) {
@@ -4619,7 +4775,7 @@
     },
     async setUsername(username) {
       await init();
-      const user = await requireAuth();
+      await requireAuth();
       const cleaned = String(username || '').trim();
       if (cleaned.length > 30) throw new Error('Username must be 30 characters or fewer.');
 
@@ -4979,7 +5135,7 @@
       if (isIncognitoSyncPaused()) {
         throw buildIncognitoPausedError('run manual sync');
       }
-      await requireAuth();
+      const user = await requireAuth();
       recordSyncActivity();
       const source = String(options?.source || 'manual').trim() || 'manual';
       const result = {
@@ -4989,33 +5145,70 @@
         pushed: false,
         pullApplied: false,
         pushApplied: false,
+        fallbackMode: null,
         pullError: null,
         pushError: null
       };
+      let pullFailure = null;
+      let pushFailure = null;
 
       try {
         result.pullApplied = await syncFromCloudNow({
           source: `manual-sync:${source}`,
           forceRun: true,
-          throwOnError: true
+          throwOnError: true,
+          allowSnapshotFallback: true
         });
         result.pulled = true;
       } catch (error) {
-        result.pullError = String(error?.message || 'Cloud pull failed.');
+        pullFailure = error;
+        result.pullError = formatSyncFailureMessage(error, 'Cloud pull failed.');
       }
 
       try {
         result.pushApplied = await flushPendingListOperationsToCloud(`manual-sync:${source}`);
         result.pushed = true;
       } catch (error) {
-        result.pushError = String(error?.message || 'Cloud push failed.');
+        pushFailure = error;
+        result.pushError = formatSyncFailureMessage(error, 'Cloud push failed.');
       }
 
       if (result.pullError || result.pushError) {
+        const shouldTrySnapshotFallback = (
+          canAttemptSnapshotFallbackForSyncError(pullFailure)
+          || canAttemptSnapshotFallbackForSyncError(pushFailure)
+        );
+        if (shouldTrySnapshotFallback) {
+          try {
+            const fallback = await runSnapshotMergeSyncFallback({
+              source: `manual-sync:${source}`
+            });
+            result.ok = true;
+            result.pulled = true;
+            result.pushed = true;
+            result.pullApplied = result.pullApplied || fallback.applied === true;
+            result.pushApplied = true;
+            result.fallbackMode = 'snapshot-merge';
+            result.pullError = null;
+            result.pushError = null;
+            return result;
+          } catch (fallbackError) {
+            const fallbackMessage = formatSyncFailureMessage(
+              fallbackError,
+              'Snapshot fallback sync failed.'
+            );
+            result.pushError = result.pushError
+              ? `${result.pushError} ${fallbackMessage}`
+              : fallbackMessage;
+          }
+        }
+
         const detail = [result.pullError, result.pushError].filter(Boolean).join(' ');
         const error = new Error(detail || 'Manual sync failed.');
         error.code = 'manual_sync_failed';
         error.result = result;
+        error.pullFailure = pullFailure || null;
+        error.pushFailure = pushFailure || null;
         throw error;
       }
 

@@ -666,7 +666,10 @@ function loadToastScript() {
       const result = await authApi.runManualSync?.({ source: 'navbar-account-menu' });
       const pullStatus = result?.pullApplied ? 'pulled updates' : 'no pull changes';
       const pushStatus = result?.pushApplied ? 'pushed updates' : 'no push changes';
-      showToast(`Sync complete: ${pullStatus}, ${pushStatus}.`, 'success');
+      const fallbackNote = result?.fallbackMode === 'snapshot-merge'
+        ? ' (snapshot fallback)'
+        : '';
+      showToast(`Sync complete${fallbackNote}: ${pullStatus}, ${pushStatus}.`, 'success');
     } catch (error) {
       console.warn('Navbar manual sync failed:', error);
       const message = String(error?.message || 'Manual sync failed.');

@@ -1638,8 +1638,11 @@ async function handleDataApiProxy(req, res, rawPathname, url) {
   const contentType = String(req.headers['content-type'] || '').trim();
   if (contentType) requestHeaders['content-type'] = contentType;
 
+  const dataApiTimeoutMs = upstreamUrl.pathname.startsWith('/sync/')
+    ? 30_000
+    : 12_000;
   const abortController = new AbortController();
-  const timeoutId = setTimeout(() => abortController.abort(), 12_000);
+  const timeoutId = setTimeout(() => abortController.abort(), dataApiTimeoutMs);
   try {
     const upstream = await fetch(upstreamUrl.toString(), {
       method,
@@ -1681,7 +1684,10 @@ async function handleDataApiProxy(req, res, rawPathname, url) {
     });
   } catch (error) {
     if (error?.name === 'AbortError') {
-      sendJson(res, 504, { error: 'Data API upstream timed out' }, {
+      sendJson(res, 504, {
+        error: 'Data API upstream timed out',
+        timeoutMs: dataApiTimeoutMs
+      }, {
         ...corsHeaders,
         ...rateLimitHeadersMap,
         'cache-control': 'no-store'

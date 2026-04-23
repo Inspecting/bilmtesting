@@ -1767,7 +1767,10 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       await ensureAuthReady();
       if (window.bilmAuth.getCurrentUser()) {
-        await window.bilmAuth.syncFromCloudNow();
+        await window.bilmAuth.syncFromCloudNow({
+          forceRun: true,
+          allowSnapshotFallback: true
+        });
         refreshLastSyncText();
       }
     } catch (error) {
