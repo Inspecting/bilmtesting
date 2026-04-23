@@ -4472,6 +4472,7 @@
       const user = auth?.currentUser || currentUser;
       const syncBeforeSignOut = options?.syncBeforeSignOut !== false;
       const allowUnsyncedSignOut = options?.allowUnsyncedSignOut !== false;
+      const clearLocalDataOnSignOut = options?.clearLocalDataOnSignOut !== false;
       if (syncBeforeSignOut && user && isSyncEnabled() && !isIncognitoSyncPaused()) {
         try {
           await flushPendingListOperationsToCloud('signout-prep');
@@ -4499,7 +4500,70 @@
           }
         }
       }
-      return modules.signOut(auth);
+      await modules.signOut(auth);
+      if (!clearLocalDataOnSignOut) return;
+      try {
+        await withMutationSuppressed(async () => {
+          try {
+            localStorage.clear();
+          } catch (error) {
+            console.warn('Local storage clear failed during sign out:', error);
+          }
+          try {
+            sessionStorage.clear();
+          } catch (error) {
+            console.warn('Session storage clear failed during sign out:', error);
+          }
+
+          const cookieSource = String(document.cookie || '');
+          if (cookieSource) {
+            cookieSource.split(';').forEach((cookie) => {
+              const eqPos = cookie.indexOf('=');
+              const name = eqPos > -1 ? cookie.slice(0, eqPos).trim() : cookie.trim();
+              if (!name) return;
+              document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+            });
+          }
+
+          if (window.indexedDB?.databases) {
+            try {
+              const databases = await window.indexedDB.databases();
+              await Promise.all((databases || []).map((db) => new Promise((resolve) => {
+                if (!db?.name) {
+                  resolve();
+                  return;
+                }
+                const request = window.indexedDB.deleteDatabase(db.name);
+                request.onsuccess = () => resolve();
+                request.onerror = () => resolve();
+                request.onblocked = () => resolve();
+              })));
+            } catch (error) {
+              console.warn('IndexedDB clear failed during sign out:', error);
+            }
+          }
+
+          if (window.caches?.keys) {
+            try {
+              const cacheKeys = await window.caches.keys();
+              await Promise.all((cacheKeys || []).map((cacheKey) => window.caches.delete(cacheKey)));
+            } catch (error) {
+              console.warn('Cache storage clear failed during sign out:', error);
+            }
+          }
+        });
+      } catch (error) {
+        emitSyncIssue({
+          scope: 'signout',
+          code: 'signout_local_clear_failed',
+          message: error?.message || 'Signed out, but local data could not be fully cleared.',
+          retryable: true
+        });
+        console.warn('Signed out, but local data clear failed:', error);
+      }
+      clearPendingSyncStateForAuthChange('signout-clear-local-data');
+      snapshotRecoveryCheckedThisSession = false;
+      sectorBootstrapCheckedThisSession = false;
     },
     getCurrentUser() {
       return auth?.currentUser || currentUser;

@@ -720,10 +720,13 @@ function loadToastScript() {
         return;
       }
       try {
-        showToast('Syncing before sign out...', 'info', 0);
+        showToast('Signing out and clearing local data...', 'info', 0);
         await authApiInstance.signOut?.();
         closeAccountMenu();
-        showToast('Signed out.', 'success');
+        showToast('Signed out. Reloading...', 'success');
+        setTimeout(() => {
+          window.location.reload();
+        }, 200);
       } catch (error) {
         console.warn('Navbar sign out failed:', error);
         showToast('Sign out failed.', 'error');
@@ -962,4 +965,3 @@ function loadToastScript() {
     });
   }
 })();
-

@@ -137,7 +137,6 @@ document.addEventListener('DOMContentLoaded', () => {
   let activeImportSlot = null;
   let reopenMergeAfterImportClose = false;
   const importSlots = { one: null, two: null };
-  const CLEAR_ON_LOGOUT_KEY = 'bilm-clear-local-on-logout';
   const SYNC_ENABLED_KEY = 'bilm-sync-enabled';
   const SYNC_META_KEY = 'bilm-sync-meta';
   const ACCOUNT_LINK_REFRESH_INTERVAL_MS = 15000;
@@ -432,14 +431,6 @@ document.addEventListener('DOMContentLoaded', () => {
       localStorage: mergeStorageMap('localStorage'),
       sessionStorage: mergeStorageMap('sessionStorage')
     };
-  }
-
-  function getClearOnLogoutSetting() {
-    return localStorage.getItem(CLEAR_ON_LOGOUT_KEY) !== '0';
-  }
-
-  function setClearOnLogoutSetting(value) {
-    localStorage.setItem(CLEAR_ON_LOGOUT_KEY, value ? '1' : '0');
   }
 
   function isSyncEnabled() {
@@ -1734,24 +1725,10 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       await ensureAuthReady();
       if (!confirm('Sign out of your account?')) return;
-      statusText.textContent = 'Syncing before sign out...';
+      statusText.textContent = 'Signing out and clearing local data...';
       await window.bilmAuth.signOut();
-      const clearOnLogout = getClearOnLogoutSetting();
-      let clearLocalDataError = null;
-      if (clearOnLogout) {
-        try {
-          await clearAllLocalData();
-        } catch (error) {
-          clearLocalDataError = error;
-          console.warn('Signed out, but local data clear failed:', error);
-        }
-      }
       transferStatusText.textContent = 'Signed out successfully.';
-      if (clearOnLogout && clearLocalDataError) {
-        statusText.textContent = 'Signed out, but local data could not be fully cleared.';
-      } else {
-        statusText.textContent = clearOnLogout ? 'Signed out and cleared local data.' : 'Signed out without clearing local data.';
-      }
+      statusText.textContent = 'Signed out and cleared local data.';
       setTimeout(() => location.reload(), 200);
     } catch (error) {
       statusText.textContent = `Sign out failed: ${error.message}`;
@@ -1772,13 +1749,6 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error('Merge failed:', error);
       transferStatusText.textContent = 'Merge failed.';
     }
-  });
-
-  clearOnLogoutToggle?.addEventListener('change', () => {
-    setClearOnLogoutSetting(clearOnLogoutToggle.checked);
-    statusText.textContent = clearOnLogoutToggle.checked
-      ? 'Sign out will clear local data.'
-      : 'Sign out will keep local data.';
   });
 
   syncToggle?.addEventListener('change', async (event) => {
@@ -1853,7 +1823,11 @@ document.addEventListener('DOMContentLoaded', () => {
   (async () => {
     try {
       await ensureAuthReady();
-      if (clearOnLogoutToggle) clearOnLogoutToggle.checked = getClearOnLogoutSetting();
+      if (clearOnLogoutToggle) {
+        clearOnLogoutToggle.checked = true;
+        clearOnLogoutToggle.disabled = true;
+        clearOnLogoutToggle.setAttribute('aria-disabled', 'true');
+      }
       setSyncEnabled(isSyncEnabled());
       refreshLastSyncText();
       refreshFirebaseBackupStatus();
