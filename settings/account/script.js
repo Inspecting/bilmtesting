@@ -93,6 +93,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveUsernameBtn = document.getElementById('saveUsernameBtn');
 
   const deleteAccountForm = document.getElementById('deleteAccountForm');
+  const deleteAccountUsername = document.getElementById('deleteAccountUsername');
   const deletePassword = document.getElementById('deletePassword');
   const deleteAccountBtn = document.getElementById('deleteAccountBtn');
   const resetDataBtn = document.getElementById('resetDataBtn');
@@ -289,6 +290,11 @@ document.addEventListener('DOMContentLoaded', () => {
     delete localState[INCOGNITO_BACKUP_KEY];
     delete localState[INCOGNITO_SEARCH_MAP_KEY];
     delete localState[DEBUG_ISSUE_LOCAL_KEY];
+    Object.keys(localState).forEach((key) => {
+      if (key === 'bilm-theme-settings' || key.startsWith('theme-')) {
+        delete localState[key];
+      }
+    });
     delete sessionState[INCOGNITO_BACKUP_KEY];
     delete sessionState[INCOGNITO_SEARCH_MAP_KEY];
     return {
@@ -1191,6 +1197,9 @@ document.addEventListener('DOMContentLoaded', () => {
     signOutBtn.hidden = !loggedIn;
     saveUsernameBtn.disabled = !loggedIn;
     deleteAccountBtn.disabled = !loggedIn;
+    if (deleteAccountUsername) {
+      deleteAccountUsername.value = user?.email || '';
+    }
     if (manualFirebaseBackupBtn) {
       manualFirebaseBackupBtn.disabled = !loggedIn;
     }

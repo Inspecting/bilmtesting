@@ -50,6 +50,13 @@
     return error instanceof TypeError || message.includes('failed to fetch') || message.includes('networkerror');
   }
 
+  function buildTransferApiUrl(path = '/') {
+    const normalizedPath = String(path || '/').trim() || '/';
+    const safePath = normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`;
+    const relative = `${DATA_API_BASE}${safePath}`;
+    return new URL(relative, window.location.href);
+  }
+
   async function getTransferAuthHeader(user) {
     if (!user || typeof user.getIdToken !== 'function') {
       throw new Error('Cloud transfer requires a signed-in Firebase session.');
@@ -232,7 +239,7 @@
     allowLegacyListFallback = false
   } = {}) {
     if (transferApiDisabled) return null;
-    const pullUrl = new URL(`${DATA_API_BASE}${SECTOR_SYNC_PULL_PATH}`);
+    const pullUrl = buildTransferApiUrl(SECTOR_SYNC_PULL_PATH);
     pullUrl.searchParams.set('userId', userId);
     pullUrl.searchParams.set('since', String(Math.max(0, Number(sinceMs || 0) || 0)));
     pullUrl.searchParams.set('limit', String(Math.max(1, Math.min(500, Number(limit || 250) || 250))));
@@ -259,7 +266,7 @@
     }
 
     if (response.status === 404 && allowLegacyListFallback) {
-      const legacyPullUrl = new URL(`${DATA_API_BASE}${LIST_SYNC_PULL_PATH}`);
+      const legacyPullUrl = buildTransferApiUrl(LIST_SYNC_PULL_PATH);
       legacyPullUrl.searchParams.set('userId', userId);
       legacyPullUrl.searchParams.set('since', String(Math.max(0, Number(sinceMs || 0) || 0)));
       legacyPullUrl.searchParams.set('limit', String(Math.max(1, Math.min(500, Number(limit || 250) || 250))));
@@ -353,7 +360,7 @@
   } = {}) {
     if (transferApiDisabled) return null;
     const authorization = await getTransferAuthHeader(user);
-    const url = new URL(`${DATA_API_BASE}${path}`);
+    const url = buildTransferApiUrl(path);
     Object.entries(query || {}).forEach(([key, value]) => {
       if (value === null || typeof value === 'undefined') return;
       url.searchParams.set(key, String(value));

@@ -157,6 +157,7 @@
           <p id="resetStatusText" class="muted">Clears local data. Logged-in users can also wipe account cloud data.</p>
         </div>
         <form id="deleteAccountForm" class="stack" autocomplete="on">
+          <input id="deleteAccountUsername" name="username" type="email" autocomplete="username email" tabindex="-1" aria-hidden="true" style="position:absolute;left:-10000px;top:auto;width:1px;height:1px;overflow:hidden;" />
           <input id="deletePassword" name="deletePassword" type="password" placeholder="Type password to confirm delete" aria-label="Delete account password confirmation" autocomplete="current-password" required />
           <button id="deleteAccountBtn" class="btn btn-danger" type="submit">Delete Account</button>
         </form>
