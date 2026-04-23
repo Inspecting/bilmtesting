@@ -447,6 +447,23 @@ nav button.active {
   height: 16px;
 }
 
+.navbar-auth-link {
+  justify-self: start;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.navbar-auth-link:hover {
+  color: color-mix(in srgb, var(--accent) 80%, #ffffff 20%);
+}
+
 .navbar-auth-status {
   min-height: 18px;
   font-size: 12px;

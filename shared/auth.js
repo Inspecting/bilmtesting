@@ -4331,6 +4331,22 @@
       const resolvedEmail = await resolveEmailFromIdentifier(identifier);
       return withAuthRetry(() => modules.signInWithEmailAndPassword(auth, resolvedEmail, password));
     },
+    async sendPasswordReset(email) {
+      await init();
+      const cleanedEmail = String(email || '').trim();
+      if (!cleanedEmail) {
+        throw new Error('Enter your email address first.');
+      }
+      try {
+        await withAuthRetry(() => modules.sendPasswordResetEmail(auth, cleanedEmail));
+      } catch (error) {
+        const code = String(error?.code || '').toLowerCase();
+        if (code === 'auth/user-not-found') {
+          return;
+        }
+        throw error;
+      }
+    },
     async setUsername(username) {
       await init();
       const user = await requireAuth();

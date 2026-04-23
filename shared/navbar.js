@@ -256,6 +256,7 @@ function loadToastScript() {
   const authEmailInput = shadow.getElementById('navbarAuthEmail');
   const authPasswordInput = shadow.getElementById('navbarAuthPassword');
   const authPasswordToggleBtn = shadow.getElementById('navbarAuthPasswordToggleBtn');
+  const authForgotBtn = shadow.getElementById('navbarAuthForgotBtn');
   const authStatus = shadow.getElementById('navbarAuthStatus');
   const authSubmitBtn = shadow.getElementById('navbarAuthSubmitBtn');
   const authSwitchBtn = shadow.getElementById('navbarAuthSwitchBtn');
@@ -537,6 +538,10 @@ function loadToastScript() {
       authSwitchBtn.textContent = 'Create account';
       authPasswordInput.autocomplete = 'current-password';
     }
+    if (authForgotBtn) {
+      authForgotBtn.hidden = normalized === 'signup';
+      authForgotBtn.disabled = false;
+    }
     setAuthPasswordVisibility(false);
     if (authStatus) authStatus.textContent = '';
   }
@@ -694,6 +699,35 @@ function loadToastScript() {
     authPasswordToggleBtn.addEventListener('click', () => {
       setAuthPasswordVisibility(!authPasswordVisible);
       authPasswordInput?.focus();
+    });
+  }
+
+  if (authForgotBtn) {
+    authForgotBtn.addEventListener('click', async () => {
+      if (!authApiInstance || typeof authApiInstance.sendPasswordReset !== 'function') {
+        if (authStatus) authStatus.textContent = 'Password reset is unavailable right now.';
+        showToast('Password reset unavailable.', 'error');
+        return;
+      }
+      const email = String(authEmailInput?.value || '').trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        if (authStatus) authStatus.textContent = 'Enter your account email first.';
+        authEmailInput?.focus();
+        return;
+      }
+      if (authStatus) authStatus.textContent = 'Sending reset email...';
+      authForgotBtn.disabled = true;
+      try {
+        await authApiInstance.sendPasswordReset(email);
+        if (authStatus) authStatus.textContent = 'If this account exists, a reset link was sent.';
+        showToast('Reset email sent.', 'success');
+      } catch (error) {
+        const message = String(error?.message || 'Password reset failed.');
+        if (authStatus) authStatus.textContent = message;
+        showToast(message, 'error');
+      } finally {
+        authForgotBtn.disabled = false;
+      }
     });
   }
 

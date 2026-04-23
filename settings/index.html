@@ -761,6 +761,7 @@
       <div class="actions-row">
         <button class="btn" id="loginBtn" type="button">Log In</button>
         <button class="btn btn-outline" id="openCreateAccountBtn" type="button">Create an Account</button>
+        <button class="btn btn-outline" id="forgotPasswordBtn" type="button">Forgot Password</button>
         <button class="btn btn-outline" id="closeLoginModalBtn" type="button">Close</button>
       </div>
     </form>
@@ -874,6 +875,7 @@
   const loginStatus = document.getElementById('loginStatus');
   const loginHelperText = document.getElementById('loginHelperText');
   const loginBtn = document.getElementById('loginBtn');
+  const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
   const toggleLoginPasswordBtn = document.getElementById('toggleLoginPasswordBtn');
   const openCreateAccountBtn = document.getElementById('openCreateAccountBtn');
   const closeLoginModalBtn = document.getElementById('closeLoginModalBtn');
@@ -1728,6 +1730,25 @@
       closeSignUpModal();
     } catch (err) {
       signUpStatus.textContent = `Sign up failed: ${err.message}`;
+    }
+  });
+
+  forgotPasswordBtn.addEventListener('click', async () => {
+    try {
+      await ensureAuthReady();
+      if (typeof window.bilmAuth?.sendPasswordReset !== 'function') {
+        throw new Error('Password reset is unavailable right now.');
+      }
+      const email = loginEmail.value.trim();
+      if (!isValidEmail(email)) throw new Error('Enter your account email first.');
+      loginStatus.textContent = 'Sending reset email...';
+      forgotPasswordBtn.disabled = true;
+      await window.bilmAuth.sendPasswordReset(email);
+      loginStatus.textContent = 'If this account exists, a reset link was sent.';
+    } catch (err) {
+      loginStatus.textContent = `Password reset failed: ${err.message}`;
+    } finally {
+      forgotPasswordBtn.disabled = false;
     }
   });
 

@@ -67,6 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const loginEmail = document.getElementById('loginEmail');
   const loginPassword = document.getElementById('loginPassword');
   const loginBtn = document.getElementById('loginBtn');
+  const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
   const toggleLoginPasswordBtn = document.getElementById('toggleLoginPasswordBtn');
 
   const signUpEmail = document.getElementById('signUpEmail');
@@ -1578,6 +1579,20 @@ document.addEventListener('DOMContentLoaded', () => {
       statusText.textContent = 'Logged in.';
     } catch (error) {
       statusText.textContent = `Log in failed: ${error.message}`;
+    }
+  });
+
+  forgotPasswordBtn?.addEventListener('click', async () => {
+    try {
+      await ensureAuthReady();
+      const email = loginEmail.value.trim();
+      if (!isValidEmail(email)) throw new Error('Enter your account email first.');
+      await window.bilmAuth.sendPasswordReset(email);
+      statusText.textContent = 'If this account exists, a reset link was sent.';
+      showToast('Reset email sent.', 'success');
+    } catch (error) {
+      statusText.textContent = `Password reset failed: ${error.message}`;
+      showToast('Password reset failed.', 'error');
     }
   });
 

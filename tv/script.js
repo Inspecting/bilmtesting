@@ -27,6 +27,7 @@ const showsPerLoad = 15;
 const PRIORITY_SECTION_COUNT = 4;
 const animeShowsPerLoad = 15;
 const ANIME_TV_GENRES = ['Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy', 'Mystery', 'Romance', 'Sci-Fi'];
+const VIDSRC_TVSHOWS_LATEST_API = '/api/vidsrc/latest?type=tvshows';
 
 let allGenres = [];
 let genresReadyPromise = Promise.resolve([]);
@@ -44,6 +45,8 @@ const apiCooldownByHost = new Map();
 const apiRequestQueueByHost = new Map();
 const inFlightGetRequests = new Map();
 const inFlightPostRequests = new Map();
+const vidsrcTvPageCache = new Map();
+const vidsrcTvDetailsCache = new Map();
 const pageRequestController = new AbortController();
 let animeSectionsBootstrapped = false;
 let animeSectionsLoadPromise = null;
@@ -161,6 +164,17 @@ function toSlug(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+function rotateBySeed(items, seed = '') {
+  const list = Array.isArray(items) ? [...items] : [];
+  if (list.length <= 1) return list;
+  let hash = 0;
+  for (const char of String(seed || '')) {
+    hash = ((hash * 31) + char.charCodeAt(0)) >>> 0;
+  }
+  const offset = hash % list.length;
+  return list.slice(offset).concat(list.slice(0, offset));
 }
 
 function enableHorizontalWheelScroll(container) {
@@ -620,6 +634,82 @@ async function fetchGenres() {
   return allGenres;
 }
 
+async function fetchVidsrcTvPage(page = 1) {
+  const numericPage = Math.max(1, Number.parseInt(page, 10) || 1);
+  if (vidsrcTvPageCache.has(numericPage)) {
+    return vidsrcTvPageCache.get(numericPage);
+  }
+
+  const url = new URL(VIDSRC_TVSHOWS_LATEST_API, getApiOrigin());
+  url.searchParams.set('page', String(numericPage));
+  const data = await fetchJSON(url.toString(), { maxRetries: SECTION_API_MAX_RETRIES });
+  const results = Array.isArray(data?.result) ? data.result : [];
+  vidsrcTvPageCache.set(numericPage, results);
+  return results;
+}
+
+async function fetchTmdbTvDetailsForFallback(tmdbId) {
+  const numericId = Number.parseInt(String(tmdbId || '').trim(), 10);
+  if (!Number.isFinite(numericId) || numericId <= 0) return null;
+  if (vidsrcTvDetailsCache.has(numericId)) {
+    return vidsrcTvDetailsCache.get(numericId);
+  }
+
+  const request = (async () => {
+    const url = `https://storage-api.watchbilm.org/media/tmdb/tv/${numericId}`;
+    const details = await fetchJSON(url, { maxRetries: SECTION_API_MAX_RETRIES });
+    if (!details || !Number.isFinite(Number(details?.id))) return null;
+    return details;
+  })().catch(() => null);
+
+  vidsrcTvDetailsCache.set(numericId, request);
+  return request;
+}
+
+function toTvFallbackResult(entry, details) {
+  const rawTitle = String(details?.name || entry?.title || '').trim();
+  if (!rawTitle) return null;
+
+  const posterPath = String(details?.poster_path || details?.backdrop_path || '').trim();
+  if (!posterPath) return null;
+
+  const yearMatch = rawTitle.match(/\b(19|20)\d{2}\b/g);
+  const inferredYear = Array.isArray(yearMatch) && yearMatch.length ? yearMatch[yearMatch.length - 1] : '';
+  const cleanedTitle = rawTitle.replace(/\s+(19|20)\d{2}\s*$/, '').trim() || rawTitle;
+  const showId = Number(details?.id || entry?.tmdb_id);
+  if (!Number.isFinite(showId)) return null;
+
+  const genreIds = Array.isArray(details?.genres)
+    ? details.genres.map((genre) => Number(genre?.id)).filter((genreId) => Number.isFinite(genreId))
+    : [];
+
+  return {
+    id: showId,
+    name: cleanedTitle,
+    poster_path: posterPath,
+    first_air_date: details?.first_air_date || (inferredYear ? `${inferredYear}-01-01` : ''),
+    vote_average: Number.isFinite(Number(details?.vote_average)) ? Number(details.vote_average) : null,
+    genre_ids: genreIds,
+    __fallbackSource: 'vidsrc'
+  };
+}
+
+async function fetchShowsFromVidsrcFallback(page = 1, sectionSeed = '') {
+  const fallbackEntries = await fetchVidsrcTvPage(page);
+  if (!fallbackEntries.length) return [];
+
+  const rotated = rotateBySeed(fallbackEntries, sectionSeed);
+  const mapped = [];
+  for (const entry of rotated) {
+    const details = await fetchTmdbTvDetailsForFallback(entry?.tmdb_id);
+    const normalized = toTvFallbackResult(entry, details);
+    if (!normalized) continue;
+    mapped.push(normalized);
+    if (mapped.length >= showsPerLoad) break;
+  }
+  return mapped;
+}
+
 function getSections() {
   const staticSections = [
     { title: 'Trending', endpoint: '/trending/tv/week' },
@@ -657,12 +747,14 @@ function getAnimeTvSections() {
   }));
 }
 
-async function fetchShows(endpoint, page = 1) {
+async function fetchShows(endpoint, page = 1, sectionSeed = '') {
   const url = endpoint.includes('?')
     ? `https://storage-api.watchbilm.org/media/tmdb${endpoint}&page=${page}`
     : `https://storage-api.watchbilm.org/media/tmdb${endpoint}?page=${page}`;
   const data = await fetchJSON(url, { maxRetries: SECTION_API_MAX_RETRIES });
-  return data?.results || [];
+  const results = Array.isArray(data?.results) ? data.results : [];
+  if (results.length) return results;
+  return fetchShowsFromVidsrcFallback(page, sectionSeed);
 }
 
 async function fetchAnimeShowsByGenre(genre, page = 1) {
@@ -785,7 +877,7 @@ async function loadShowsForSection(section) {
   loadedShowIds[section.slug] ??= new Set();
 
   const page = Math.floor(loadedCounts[section.slug] / showsPerLoad) + 1;
-  const shows = await fetchShows(section.endpoint, page);
+  const shows = await fetchShows(section.endpoint, page, section.slug);
   if (!shows.length) {
     if (statusEl && !rowEl.children.length) {
       statusEl.textContent = 'Could not load titles right now. Please refresh in a moment.';
@@ -814,7 +906,7 @@ async function loadShowsForSection(section) {
       year: show.first_air_date?.slice(0, 4) || 'N/A',
       img: poster,
       link: `./show.html?id=${show.id}`,
-      source: 'TMDB',
+      source: show.__fallbackSource === 'vidsrc' ? 'VidSrc' : 'TMDB',
       rating: Number.isFinite(Number(show.vote_average)) ? Number(show.vote_average) : null
     };
 

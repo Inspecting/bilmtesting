@@ -90,6 +90,7 @@ const RATE_LIMIT_STORE_SOFT_CAP = 5000;
 const TMDB_PATH_SEGMENT_RE = /^[a-z0-9_-]+$/i;
 const TMDB_QUERY_KEY_RE = /^[a-z0-9_.-]+$/i;
 const ANILIST_ALLOWED_PAYLOAD_KEYS = new Set(['query', 'variables', 'operationName', 'extensions']);
+const VIDSRC_ALLOWED_TYPES = new Set(['movies', 'tvshows', 'episodes']);
 const RATE_LIMITS = Object.freeze({
   tmdb: Object.freeze({
     limit: parseEnvInt('TMDB_PROXY_RATE_LIMIT', 120, { min: 10, max: 5000 }),
@@ -933,6 +934,134 @@ async function handleTmdbProxy(req, res, pathname, searchParams) {
   }
 }
 
+function sanitizeVidsrcType(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!VIDSRC_ALLOWED_TYPES.has(normalized)) return '';
+  return normalized;
+}
+
+function sanitizeVidsrcPage(value) {
+  const parsed = Number.parseInt(String(value || '').trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 500) return null;
+  return parsed;
+}
+
+async function handleVidsrcLatestProxy(req, res, searchParams) {
+  const corsHeaders = buildCorsHeaders(req);
+  if (req.method === 'OPTIONS') {
+    const preflightCorsHeaders = buildCorsHeaders(req, {
+      methods: 'GET, HEAD, OPTIONS',
+      defaultAllowHeaders: 'accept, content-type',
+      includePreflight: true
+    });
+    sendNoContent(res, 204, {
+      ...preflightCorsHeaders,
+      allow: 'GET, HEAD, OPTIONS',
+      'cache-control': 'no-store'
+    });
+    return;
+  }
+
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    sendJson(res, 405, { error: 'Method Not Allowed' }, {
+      ...corsHeaders,
+      allow: 'GET, HEAD, OPTIONS',
+      'cache-control': 'no-store'
+    });
+    return;
+  }
+
+  const { blocked, headers: rateLimitHeadersMap } = enforceRateLimit(req, res, 'tmdb', corsHeaders);
+  if (blocked) return;
+
+  const requestedType = sanitizeVidsrcType(searchParams.get('type'));
+  if (!requestedType) {
+    sendJson(res, 400, { error: 'Invalid VidSrc type. Use movies, tvshows, or episodes.' }, {
+      ...corsHeaders,
+      ...rateLimitHeadersMap,
+      'cache-control': 'no-store'
+    });
+    return;
+  }
+
+  const requestedPage = sanitizeVidsrcPage(searchParams.get('page') || '1');
+  if (!requestedPage) {
+    sendJson(res, 400, { error: 'Invalid VidSrc page. Use an integer between 1 and 500.' }, {
+      ...corsHeaders,
+      ...rateLimitHeadersMap,
+      'cache-control': 'no-store'
+    });
+    return;
+  }
+
+  const upstreamUrl = `https://vidsrc-embed.ru/${requestedType}/latest/page-${requestedPage}.json`;
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), 12000);
+  try {
+    const upstream = await fetch(upstreamUrl, {
+      method: req.method,
+      headers: {
+        accept: 'application/json, text/plain, */*',
+        'user-agent': 'BilmProxy/1.0 (+https://watchbilm.org)'
+      },
+      signal: abortController.signal
+    });
+
+    if (!upstream.ok) {
+      sendJson(res, upstream.status, { error: 'VidSrc upstream request failed', status: upstream.status }, {
+        ...corsHeaders,
+        ...rateLimitHeadersMap,
+        'cache-control': 'no-store'
+      });
+      return;
+    }
+
+    if (req.method === 'HEAD') {
+      sendNoContent(res, 204, {
+        ...corsHeaders,
+        ...rateLimitHeadersMap,
+        'cache-control': 'public, max-age=60, stale-while-revalidate=120'
+      });
+      return;
+    }
+
+    const payloadText = await upstream.text();
+    let payload;
+    try {
+      payload = JSON.parse(payloadText);
+    } catch {
+      sendJson(res, 502, { error: 'VidSrc upstream returned invalid JSON' }, {
+        ...corsHeaders,
+        ...rateLimitHeadersMap,
+        'cache-control': 'no-store'
+      });
+      return;
+    }
+
+    sendJson(res, 200, payload, {
+      ...corsHeaders,
+      ...rateLimitHeadersMap,
+      'cache-control': 'public, max-age=60, stale-while-revalidate=120'
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      sendJson(res, 504, { error: 'VidSrc upstream timed out' }, {
+        ...corsHeaders,
+        ...rateLimitHeadersMap,
+        'cache-control': 'no-store'
+      });
+      return;
+    }
+    sendJson(res, 502, { error: 'VidSrc proxy request failed' }, {
+      ...corsHeaders,
+      ...rateLimitHeadersMap,
+      'cache-control': 'no-store'
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function handleChatApiProxy(req, res, rawPathname, url) {
   const corsHeaders = buildCorsHeaders(req);
   if (req.method === 'OPTIONS') {
@@ -1366,6 +1495,10 @@ async function routeRequest(req, res) {
   }
   if (rawPathname === '/api/tmdb' || rawPathname.startsWith('/api/tmdb/')) {
     await handleTmdbProxy(req, res, rawPathname, url.searchParams);
+    return;
+  }
+  if (rawPathname === '/api/vidsrc/latest') {
+    await handleVidsrcLatestProxy(req, res, url.searchParams);
     return;
   }
   if (rawPathname === '/api/chat' || rawPathname.startsWith('/api/chat/')) {

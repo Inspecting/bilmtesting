@@ -27,6 +27,7 @@ const moviesPerLoad = 15;
 const PRIORITY_SECTION_COUNT = 4;
 const animeMoviesPerLoad = 15;
 const ANIME_MOVIE_GENRES = ['Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy', 'Horror', 'Romance', 'Sci-Fi'];
+const VIDSRC_MOVIES_LATEST_API = '/api/vidsrc/latest?type=movies';
 
 let allGenres = [];
 let genresReadyPromise = Promise.resolve([]);
@@ -44,6 +45,8 @@ const apiCooldownByHost = new Map();
 const apiRequestQueueByHost = new Map();
 const inFlightGetRequests = new Map();
 const inFlightPostRequests = new Map();
+const vidsrcMoviePageCache = new Map();
+const vidsrcMovieDetailsCache = new Map();
 const pageRequestController = new AbortController();
 
 const modeState = { current: 'regular' };
@@ -162,6 +165,17 @@ function toSlug(value) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+function rotateBySeed(items, seed = '') {
+  const list = Array.isArray(items) ? [...items] : [];
+  if (list.length <= 1) return list;
+  let hash = 0;
+  for (const char of String(seed || '')) {
+    hash = ((hash * 31) + char.charCodeAt(0)) >>> 0;
+  }
+  const offset = hash % list.length;
+  return list.slice(offset).concat(list.slice(0, offset));
 }
 
 function enableHorizontalWheelScroll(container) {
@@ -621,6 +635,82 @@ async function fetchGenres() {
   return allGenres;
 }
 
+async function fetchVidsrcMoviePage(page = 1) {
+  const numericPage = Math.max(1, Number.parseInt(page, 10) || 1);
+  if (vidsrcMoviePageCache.has(numericPage)) {
+    return vidsrcMoviePageCache.get(numericPage);
+  }
+
+  const url = new URL(VIDSRC_MOVIES_LATEST_API, getApiOrigin());
+  url.searchParams.set('page', String(numericPage));
+  const data = await fetchJSON(url.toString(), { maxRetries: SECTION_API_MAX_RETRIES });
+  const results = Array.isArray(data?.result) ? data.result : [];
+  vidsrcMoviePageCache.set(numericPage, results);
+  return results;
+}
+
+async function fetchTmdbMovieDetailsForFallback(tmdbId) {
+  const numericId = Number.parseInt(String(tmdbId || '').trim(), 10);
+  if (!Number.isFinite(numericId) || numericId <= 0) return null;
+  if (vidsrcMovieDetailsCache.has(numericId)) {
+    return vidsrcMovieDetailsCache.get(numericId);
+  }
+
+  const request = (async () => {
+    const url = `https://storage-api.watchbilm.org/media/tmdb/movie/${numericId}`;
+    const details = await fetchJSON(url, { maxRetries: SECTION_API_MAX_RETRIES });
+    if (!details || !Number.isFinite(Number(details?.id))) return null;
+    return details;
+  })().catch(() => null);
+
+  vidsrcMovieDetailsCache.set(numericId, request);
+  return request;
+}
+
+function toMovieFallbackResult(entry, details) {
+  const rawTitle = String(details?.title || entry?.title || '').trim();
+  if (!rawTitle) return null;
+
+  const posterPath = String(details?.poster_path || details?.backdrop_path || '').trim();
+  if (!posterPath) return null;
+
+  const yearMatch = rawTitle.match(/\b(19|20)\d{2}\b/g);
+  const inferredYear = Array.isArray(yearMatch) && yearMatch.length ? yearMatch[yearMatch.length - 1] : '';
+  const cleanedTitle = rawTitle.replace(/\s+(19|20)\d{2}\s*$/, '').trim() || rawTitle;
+  const movieId = Number(details?.id || entry?.tmdb_id);
+  if (!Number.isFinite(movieId)) return null;
+
+  const genreIds = Array.isArray(details?.genres)
+    ? details.genres.map((genre) => Number(genre?.id)).filter((genreId) => Number.isFinite(genreId))
+    : [];
+
+  return {
+    id: movieId,
+    title: cleanedTitle,
+    poster_path: posterPath,
+    release_date: details?.release_date || (inferredYear ? `${inferredYear}-01-01` : ''),
+    vote_average: Number.isFinite(Number(details?.vote_average)) ? Number(details.vote_average) : null,
+    genre_ids: genreIds,
+    __fallbackSource: 'vidsrc'
+  };
+}
+
+async function fetchMoviesFromVidsrcFallback(page = 1, sectionSeed = '') {
+  const fallbackEntries = await fetchVidsrcMoviePage(page);
+  if (!fallbackEntries.length) return [];
+
+  const rotated = rotateBySeed(fallbackEntries, sectionSeed);
+  const mapped = [];
+  for (const entry of rotated) {
+    const details = await fetchTmdbMovieDetailsForFallback(entry?.tmdb_id);
+    const normalized = toMovieFallbackResult(entry, details);
+    if (!normalized) continue;
+    mapped.push(normalized);
+    if (mapped.length >= moviesPerLoad) break;
+  }
+  return mapped;
+}
+
 function getSections() {
   const staticSections = [
     { title: 'Trending', endpoint: '/trending/movie/week' },
@@ -658,12 +748,14 @@ function getAnimeMovieSections() {
   }));
 }
 
-async function fetchMovies(endpoint, page = 1) {
+async function fetchMovies(endpoint, page = 1, sectionSeed = '') {
   const url = endpoint.includes('?')
     ? `https://storage-api.watchbilm.org/media/tmdb${endpoint}&page=${page}`
     : `https://storage-api.watchbilm.org/media/tmdb${endpoint}?page=${page}`;
   const data = await fetchJSON(url, { maxRetries: SECTION_API_MAX_RETRIES });
-  return data?.results || [];
+  const results = Array.isArray(data?.results) ? data.results : [];
+  if (results.length) return results;
+  return fetchMoviesFromVidsrcFallback(page, sectionSeed);
 }
 
 async function fetchAnimeMoviesByGenre(genre, page = 1) {
@@ -791,7 +883,7 @@ async function loadMoviesForSection(section) {
   loadedMovieIds[section.slug] ??= new Set();
 
   const page = Math.floor(loadedCounts[section.slug] / moviesPerLoad) + 1;
-  const movies = await fetchMovies(section.endpoint, page);
+  const movies = await fetchMovies(section.endpoint, page, section.slug);
   if (!movies.length) {
     if (statusEl && !rowEl.children.length) {
       statusEl.textContent = 'Could not load titles right now. Please refresh in a moment.';
@@ -820,7 +912,7 @@ async function loadMoviesForSection(section) {
       year: movie.release_date?.slice(0, 4) || 'N/A',
       img: poster,
       link: `${BASE_URL}/movies/show.html?id=${movie.id}`,
-      source: 'TMDB',
+      source: movie.__fallbackSource === 'vidsrc' ? 'VidSrc' : 'TMDB',
       rating: Number.isFinite(Number(movie.vote_average)) ? Number(movie.vote_average) : null
     };
 
