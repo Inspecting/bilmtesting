@@ -51,11 +51,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const dataModal = document.getElementById('dataModal');
   const mergeModal = document.getElementById('mergeModal');
   const cloudAuthPromptModal = document.getElementById('cloudAuthPromptModal');
+  const passwordResetSentModal = document.getElementById('passwordResetSentModal');
 
   const closeLoginModalBtn = document.getElementById('closeLoginModalBtn');
   const closeSignUpModalBtn = document.getElementById('closeSignUpModalBtn');
   const closeDataModalBtn = document.getElementById('closeDataModalBtn');
   const closeMergeModalBtn = document.getElementById('closeMergeModalBtn');
+  const closePasswordResetSentModalBtn = document.getElementById('closePasswordResetSentModalBtn');
   const confirmCloudLoginBtn = document.getElementById('confirmCloudLoginBtn');
   const cancelCloudLoginBtn = document.getElementById('cancelCloudLoginBtn');
   const openCreateAccountBtn = document.getElementById('openCreateAccountBtn');
@@ -68,6 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const loginPassword = document.getElementById('loginPassword');
   const loginBtn = document.getElementById('loginBtn');
   const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
+  const passwordResetSentPrimary = document.getElementById('passwordResetSentPrimary');
   const toggleLoginPasswordBtn = document.getElementById('toggleLoginPasswordBtn');
 
   const signUpEmail = document.getElementById('signUpEmail');
@@ -89,6 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const usernameInput = document.getElementById('usernameInput');
   const saveUsernameBtn = document.getElementById('saveUsernameBtn');
 
+  const deleteAccountForm = document.getElementById('deleteAccountForm');
   const deletePassword = document.getElementById('deletePassword');
   const deleteAccountBtn = document.getElementById('deleteAccountBtn');
   const resetDataBtn = document.getElementById('resetDataBtn');
@@ -239,9 +243,21 @@ document.addEventListener('DOMContentLoaded', () => {
     closeModal(dataModal);
     closeModal(mergeModal);
     closeModal(cloudAuthPromptModal);
+    closeModal(passwordResetSentModal);
     closeAccountLinkModal();
     pendingImportPayload = null;
     reopenMergeAfterImportClose = false;
+  }
+
+  function openPasswordResetSentModal(email) {
+    const safeEmail = String(email || '').trim();
+    if (passwordResetSentPrimary) {
+      passwordResetSentPrimary.textContent = safeEmail
+        ? `A password reset link was sent to ${safeEmail}.`
+        : 'A password reset link was sent to your email.';
+    }
+    closeModal(loginModal);
+    openModal(passwordResetSentModal);
   }
 
   function shouldIncludeStorageKey(key, allowlist) {
@@ -1239,6 +1255,7 @@ document.addEventListener('DOMContentLoaded', () => {
     closeDataImportModal();
   });
   closeMergeModalBtn?.addEventListener('click', () => closeModal(mergeModal));
+  closePasswordResetSentModalBtn?.addEventListener('click', () => closeModal(passwordResetSentModal));
   closeAccountLinkModalBtn?.addEventListener('click', () => closeAccountLinkModal());
 
   openCreateAccountBtn?.addEventListener('click', () => {
@@ -1249,7 +1266,7 @@ document.addEventListener('DOMContentLoaded', () => {
     openSharedAuthModal('login');
   });
 
-  [loginModal, signUpModal, dataModal, mergeModal, cloudAuthPromptModal, accountLinkModal].forEach((modal) => {
+  [loginModal, signUpModal, dataModal, mergeModal, cloudAuthPromptModal, accountLinkModal, passwordResetSentModal].forEach((modal) => {
     modal?.addEventListener('click', (event) => {
       if (event.target === modal) {
         if (modal === dataModal) {
@@ -1277,6 +1294,11 @@ document.addEventListener('DOMContentLoaded', () => {
   signUpForm?.addEventListener('submit', (event) => {
     event.preventDefault();
     signUpBtn.click();
+  });
+
+  deleteAccountForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    deleteAccountBtn?.click();
   });
 
   openAccountLinkModalBtn?.addEventListener('click', () => {
@@ -1590,6 +1612,7 @@ document.addEventListener('DOMContentLoaded', () => {
       await window.bilmAuth.sendPasswordReset(email);
       statusText.textContent = 'If this account exists, a reset link was sent.';
       showToast('Reset email sent.', 'success');
+      openPasswordResetSentModal(email);
     } catch (error) {
       statusText.textContent = `Password reset failed: ${error.message}`;
       showToast('Password reset failed.', 'error');

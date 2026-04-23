@@ -375,6 +375,11 @@ nav button.active {
   font-size: 13px;
 }
 
+.navbar-reset-hint {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .navbar-auth-close {
   position: absolute;
   top: 8px;

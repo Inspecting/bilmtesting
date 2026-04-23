@@ -15,6 +15,7 @@
   <link rel="manifest" href="../manifest.json" />
   <link rel="apple-touch-icon" href="../icon.png" />
 
+  <link rel="icon" type="image/png" href="../icon.png" />
   <!-- Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="../shared/theme.css" />
@@ -788,6 +789,17 @@
   </div>
 </div>
 
+<div class="data-modal" id="passwordResetSentModal" role="dialog" aria-modal="true" aria-labelledby="passwordResetSentTitle">
+  <div class="data-modal__panel">
+    <h3 id="passwordResetSentTitle">Reset Email Sent</h3>
+    <p id="passwordResetSentPrimary">A password reset link was sent.</p>
+    <p>If you do not see it, check your junk, spam, or trash folders.</p>
+    <div class="actions-row">
+      <button class="btn" id="closePasswordResetSentModalBtn" type="button">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="data-modal" id="dataModal" role="dialog" aria-modal="true" aria-labelledby="dataModalTitle">
   <div class="data-modal__panel">
     <h3 id="dataModalTitle">Backup Data</h3>
@@ -869,6 +881,7 @@
   const syncToggle = document.getElementById('syncToggle');
   const syncStatusText = document.getElementById('syncStatusText');
   const loginModal = document.getElementById('loginModal');
+  const passwordResetSentModal = document.getElementById('passwordResetSentModal');
   const loginForm = document.getElementById('loginForm');
   const loginEmail = document.getElementById('loginEmail');
   const loginPassword = document.getElementById('loginPassword');
@@ -876,9 +889,11 @@
   const loginHelperText = document.getElementById('loginHelperText');
   const loginBtn = document.getElementById('loginBtn');
   const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
+  const passwordResetSentPrimary = document.getElementById('passwordResetSentPrimary');
   const toggleLoginPasswordBtn = document.getElementById('toggleLoginPasswordBtn');
   const openCreateAccountBtn = document.getElementById('openCreateAccountBtn');
   const closeLoginModalBtn = document.getElementById('closeLoginModalBtn');
+  const closePasswordResetSentModalBtn = document.getElementById('closePasswordResetSentModalBtn');
   const signUpModal = document.getElementById('signUpModal');
   const signUpForm = document.getElementById('signUpForm');
   const signUpEmail = document.getElementById('signUpEmail');
@@ -1367,6 +1382,21 @@
     // Shared navbar modal handles close state.
   }
 
+  function openPasswordResetSentModal(email) {
+    const safeEmail = String(email || '').trim();
+    if (passwordResetSentPrimary) {
+      passwordResetSentPrimary.textContent = safeEmail
+        ? `A password reset link was sent to ${safeEmail}.`
+        : 'A password reset link was sent to your email.';
+    }
+    loginModal.classList.remove('open');
+    passwordResetSentModal.classList.add('open');
+  }
+
+  function closePasswordResetSentModal() {
+    passwordResetSentModal.classList.remove('open');
+  }
+
   function updateAccountUi(user) {
     if (user) {
       accountStatusText.textContent = `Logged in as ${user.email || 'account user'}.`;
@@ -1745,8 +1775,11 @@
       forgotPasswordBtn.disabled = true;
       await window.bilmAuth.sendPasswordReset(email);
       loginStatus.textContent = 'If this account exists, a reset link was sent.';
+      showToast('Reset email sent.', 'success');
+      openPasswordResetSentModal(email);
     } catch (err) {
       loginStatus.textContent = `Password reset failed: ${err.message}`;
+      showToast('Password reset failed.', 'error');
     } finally {
       forgotPasswordBtn.disabled = false;
     }
@@ -1766,10 +1799,15 @@
   toggleSignUpPasswordBtn.addEventListener('click', () => setPasswordVisibility(signUpPassword, toggleSignUpPasswordBtn));
 
   closeLoginModalBtn.addEventListener('click', closeLoginModal);
+  closePasswordResetSentModalBtn.addEventListener('click', closePasswordResetSentModal);
   closeSignUpModalBtn.addEventListener('click', closeSignUpModal);
 
   loginModal.addEventListener('click', (event) => {
     if (event.target === loginModal) closeLoginModal();
+  });
+
+  passwordResetSentModal.addEventListener('click', (event) => {
+    if (event.target === passwordResetSentModal) closePasswordResetSentModal();
   });
 
   signUpModal.addEventListener('click', (event) => {

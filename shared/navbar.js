@@ -31,6 +31,26 @@ function withBase(path) {
   return `${BASE_PATH}${normalized}`;
 }
 
+function ensureFavicon() {
+  const iconHref = withBase('/icon.png');
+  let favicon = document.querySelector('link[rel="icon"]');
+  if (!favicon) {
+    favicon = document.createElement('link');
+    favicon.setAttribute('rel', 'icon');
+    document.head.appendChild(favicon);
+  }
+  favicon.setAttribute('type', 'image/png');
+  favicon.setAttribute('href', iconHref);
+
+  let touchIcon = document.querySelector('link[rel="apple-touch-icon"]');
+  if (!touchIcon) {
+    touchIcon = document.createElement('link');
+    touchIcon.setAttribute('rel', 'apple-touch-icon');
+    document.head.appendChild(touchIcon);
+  }
+  touchIcon.setAttribute('href', iconHref);
+}
+
 function readCachedNavbarAssets() {
   try {
     const raw = localStorage.getItem(NAVBAR_ASSET_CACHE_KEY);
@@ -202,6 +222,7 @@ function loadToastScript() {
 
 (async () => {
   purgeLegacyNavbarAssetCache();
+  ensureFavicon();
 
   const container = document.getElementById('navbar-placeholder') || document.getElementById('navbarContainer');
   if (!container) return;
@@ -262,6 +283,10 @@ function loadToastScript() {
   const authSwitchBtn = shadow.getElementById('navbarAuthSwitchBtn');
   const authTitle = shadow.getElementById('navbarAuthTitle');
   const authHint = shadow.getElementById('navbarAuthHint');
+  const resetSentModal = shadow.getElementById('navbarResetSentModal');
+  const resetSentCloseBtn = shadow.getElementById('navbarResetSentCloseBtn');
+  const resetSentDoneBtn = shadow.getElementById('navbarResetSentDoneBtn');
+  const resetSentPrimary = shadow.getElementById('navbarResetSentPrimary');
 
   loadToastScript().catch((error) => {
     console.warn('Toast module unavailable:', error);
@@ -563,6 +588,23 @@ function loadToastScript() {
     setAuthPasswordVisibility(false);
   }
 
+  function openResetSentModal(email) {
+    if (!resetSentModal) return;
+    const safeEmail = String(email || '').trim();
+    if (resetSentPrimary) {
+      resetSentPrimary.textContent = safeEmail
+        ? `A password reset link was sent to ${safeEmail}.`
+        : 'A password reset link was sent to your email.';
+    }
+    closeAuthModal();
+    resetSentModal.hidden = false;
+  }
+
+  function closeResetSentModal() {
+    if (!resetSentModal) return;
+    resetSentModal.hidden = true;
+  }
+
   window.bilmAuthUi = window.bilmAuthUi || {};
   window.bilmAuthUi.open = (mode = 'login') => openAuthModal(mode);
   window.bilmAuthUi.close = () => closeAuthModal();
@@ -721,6 +763,7 @@ function loadToastScript() {
         await authApiInstance.sendPasswordReset(email);
         if (authStatus) authStatus.textContent = 'If this account exists, a reset link was sent.';
         showToast('Reset email sent.', 'success');
+        openResetSentModal(email);
       } catch (error) {
         const message = String(error?.message || 'Password reset failed.');
         if (authStatus) authStatus.textContent = message;
@@ -741,6 +784,26 @@ function loadToastScript() {
     authModal.addEventListener('click', (event) => {
       if (event.target === authModal) {
         closeAuthModal();
+      }
+    });
+  }
+
+  if (resetSentCloseBtn) {
+    resetSentCloseBtn.addEventListener('click', () => {
+      closeResetSentModal();
+    });
+  }
+
+  if (resetSentDoneBtn) {
+    resetSentDoneBtn.addEventListener('click', () => {
+      closeResetSentModal();
+    });
+  }
+
+  if (resetSentModal) {
+    resetSentModal.addEventListener('click', (event) => {
+      if (event.target === resetSentModal) {
+        closeResetSentModal();
       }
     });
   }
@@ -789,6 +852,7 @@ function loadToastScript() {
     if (event.key === 'Escape') {
       closeAccountMenu();
       closeAuthModal();
+      closeResetSentModal();
     }
   });
 

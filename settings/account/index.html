@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#0a0a0a" />
   <link rel="manifest" href="../../manifest.json" />
   <link rel="apple-touch-icon" href="../../icon.png" />
+  <link rel="icon" type="image/png" href="../../icon.png" />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="../../shared/theme.css" />
   <link rel="stylesheet" href="./style.css" />
@@ -155,10 +156,10 @@
           <button id="resetDataBtn" class="btn btn-danger" type="button">Reset Data</button>
           <p id="resetStatusText" class="muted">Clears local data. Logged-in users can also wipe account cloud data.</p>
         </div>
-        <div class="stack">
-          <input id="deletePassword" type="password" placeholder="Type password to confirm delete" aria-label="Delete account password confirmation" autocomplete="current-password" />
-          <button id="deleteAccountBtn" class="btn btn-danger" type="button">Delete Account</button>
-        </div>
+        <form id="deleteAccountForm" class="stack" autocomplete="on">
+          <input id="deletePassword" name="deletePassword" type="password" placeholder="Type password to confirm delete" aria-label="Delete account password confirmation" autocomplete="current-password" required />
+          <button id="deleteAccountBtn" class="btn btn-danger" type="submit">Delete Account</button>
+        </form>
       </section>
 
       <p id="statusText" class="status" aria-live="polite"></p>
@@ -201,6 +202,17 @@
           <button id="closeSignUpModalBtn" class="btn btn-outline" type="button">Close</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div class="data-modal" id="passwordResetSentModal" role="dialog" aria-modal="true" aria-labelledby="passwordResetSentTitle">
+    <div class="data-modal__panel">
+      <h3 id="passwordResetSentTitle">Reset Email Sent</h3>
+      <p id="passwordResetSentPrimary">Reset email sent.</p>
+      <p class="muted">If you do not see it, check your junk, spam, or trash folders.</p>
+      <div class="actions modal-actions">
+        <button id="closePasswordResetSentModalBtn" class="btn" type="button">Close</button>
+      </div>
     </div>
   </div>
 
