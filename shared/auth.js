@@ -11,7 +11,7 @@
   };
 
 
-  const DATA_API_BASE = 'https://data-api.watchbilm.org';
+  const DATA_API_BASE = '/api/data';
   const CHAT_API_BASE = 'https://chat-api.watchbilm.org';
   const LIST_SYNC_PUSH_PATH = '/sync/lists/push';
   const LIST_SYNC_PULL_PATH = '/sync/lists/pull';

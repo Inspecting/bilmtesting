@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
 
 const rootDir = path.resolve(process.cwd());
 const port = Number(process.env.PORT || 8080);
@@ -20,6 +21,14 @@ const DEFAULT_HEALTH_CHECK_ALLOWED_HOSTS = new Set([
 function resolveHealthCheckAllowedHosts() {
   const envValue = String(process.env.HEALTH_CHECK_ALLOWED_HOSTS || '').trim();
   const hosts = new Set([...DEFAULT_HEALTH_CHECK_ALLOWED_HOSTS]);
+  const supabaseProjectUrl = String(process.env.SUPABASE_PROJECT_URL || '').trim();
+  if (supabaseProjectUrl) {
+    try {
+      const parsedSupabase = new URL(supabaseProjectUrl);
+      const supabaseHost = String(parsedSupabase.hostname || '').trim().toLowerCase();
+      if (supabaseHost) hosts.add(supabaseHost);
+    } catch {}
+  }
   if (!envValue) return hosts;
   envValue
     .split(',')
@@ -79,14 +88,84 @@ function resolveChatApiBase() {
   }
 }
 
+function resolveDataApiBase() {
+  const rawValue = String(process.env.DATA_API_BASE || 'https://data-api.watchbilm.org').trim();
+  if (!rawValue) return 'https://data-api.watchbilm.org';
+  try {
+    const parsed = new URL(rawValue);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return 'https://data-api.watchbilm.org';
+    }
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString().replace(/\/+$/, '');
+  } catch {
+    return 'https://data-api.watchbilm.org';
+  }
+}
+
+function resolveSupabaseProjectUrl() {
+  const rawValue = String(process.env.SUPABASE_PROJECT_URL || '').trim();
+  if (!rawValue) return '';
+  try {
+    const parsed = new URL(rawValue);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return '';
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return '';
+  }
+}
+
+function resolveSupabaseMirrorTable() {
+  const rawValue = String(process.env.SUPABASE_MIRROR_TABLE || 'cloudflare_mirror_events').trim().toLowerCase();
+  if (!rawValue) return 'cloudflare_mirror_events';
+  if (!/^[a-z0-9_.-]{1,128}$/i.test(rawValue)) return 'cloudflare_mirror_events';
+  return rawValue;
+}
+
+function resolveSupabaseMirrorQueueFile() {
+  const rawValue = String(process.env.SUPABASE_MIRROR_QUEUE_FILE || 'runtime/supabase-mirror-queue.jsonl').trim();
+  if (!rawValue) {
+    return path.resolve(rootDir, 'runtime/supabase-mirror-queue.jsonl');
+  }
+  if (path.isAbsolute(rawValue)) {
+    return path.resolve(rawValue);
+  }
+  return path.resolve(rootDir, rawValue);
+}
+
 const HEALTH_CHECK_ALLOWED_HOSTS = resolveHealthCheckAllowedHosts();
 const ADMIN_EMAIL_ALLOWLIST = resolveAdminEmailAllowlist();
 const CHAT_API_BASE = resolveChatApiBase();
+const DATA_API_BASE = resolveDataApiBase();
 const CHAT_PROXY_ALLOW_AUTH_BYPASS = parseEnvBool('CHAT_PROXY_ALLOW_AUTH_BYPASS', false);
+const SUPABASE_PROJECT_URL = resolveSupabaseProjectUrl();
+const SUPABASE_SERVICE_ROLE_KEY = String(process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const SUPABASE_MIRROR_TABLE = resolveSupabaseMirrorTable();
+const SUPABASE_MIRROR_ENABLED = parseEnvBool('SUPABASE_MIRROR_ENABLED', true);
+const SUPABASE_MIRROR_TIMEOUT_MS = parseEnvInt('SUPABASE_MIRROR_TIMEOUT_MS', 10_000, {
+  min: 1000,
+  max: 60_000
+});
+const SUPABASE_MIRROR_RETRY_INTERVAL_MS = parseEnvInt('SUPABASE_MIRROR_RETRY_INTERVAL_MS', 30_000, {
+  min: 1000,
+  max: 900_000
+});
+const SUPABASE_MIRROR_QUEUE_FILE = resolveSupabaseMirrorQueueFile();
+const SUPABASE_MIRROR_ACTIVE = SUPABASE_MIRROR_ENABLED
+  && Boolean(SUPABASE_PROJECT_URL && SUPABASE_SERVICE_ROLE_KEY && SUPABASE_MIRROR_TABLE);
 const BILM_OPS_TOKEN = String(process.env.BILM_OPS_TOKEN || '').trim();
 const RATE_LIMIT_STORE = new Map();
 let nextRateLimitSweepAtMs = 0;
 const RATE_LIMIT_STORE_SOFT_CAP = 5000;
+let mirrorQueueLoaded = false;
+let mirrorQueue = [];
+let mirrorQueueLock = Promise.resolve();
+let mirrorRetryTimer = null;
+let mirrorFlushRunning = false;
+let mirrorLastSuccessAtMs = 0;
+let mirrorLastErrorAtMs = 0;
+let mirrorLastError = '';
 const TMDB_PATH_SEGMENT_RE = /^[a-z0-9_-]+$/i;
 const TMDB_QUERY_KEY_RE = /^[a-z0-9_.-]+$/i;
 const ANILIST_ALLOWED_PAYLOAD_KEYS = new Set(['query', 'variables', 'operationName', 'extensions']);
@@ -103,6 +182,10 @@ const RATE_LIMITS = Object.freeze({
   chat: Object.freeze({
     limit: parseEnvInt('CHAT_PROXY_RATE_LIMIT', 120, { min: 10, max: 5000 }),
     windowMs: parseEnvInt('CHAT_PROXY_RATE_WINDOW_MS', 60_000, { min: 1000, max: 3_600_000 })
+  }),
+  data: Object.freeze({
+    limit: parseEnvInt('DATA_PROXY_RATE_LIMIT', 120, { min: 10, max: 5000 }),
+    windowMs: parseEnvInt('DATA_PROXY_RATE_WINDOW_MS', 60_000, { min: 1000, max: 3_600_000 })
   }),
   healthcheck: Object.freeze({
     limit: parseEnvInt('HEALTH_CHECK_RATE_LIMIT', 20, { min: 5, max: 2000 }),
@@ -715,6 +798,417 @@ async function readRequestBody(req, maxBytes = 256 * 1024) {
   return Buffer.concat(chunks).toString('utf-8');
 }
 
+function safeParseJson(rawValue, fallback = null) {
+  try {
+    return JSON.parse(rawValue);
+  } catch {
+    return fallback;
+  }
+}
+
+function withMirrorQueueLock(task) {
+  const run = async () => task();
+  mirrorQueueLock = mirrorQueueLock.then(run, run);
+  return mirrorQueueLock;
+}
+
+function isMirrorableDataApiPath(pathname) {
+  const normalizedPath = String(pathname || '').trim();
+  if (!normalizedPath) return false;
+  if (normalizedPath === '/') return true;
+  if (normalizedPath === '/account/reset') return true;
+  if (normalizedPath === '/links' || normalizedPath.startsWith('/links/')) return true;
+  if (normalizedPath.startsWith('/sync/lists/')) return true;
+  if (normalizedPath.startsWith('/sync/sectors/')) return true;
+  return false;
+}
+
+function sanitizeMirrorUserId(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  if (normalized.length > 128) return null;
+  if (!/^[a-zA-Z0-9._:@-]+$/.test(normalized)) return null;
+  return normalized;
+}
+
+function toJsonBodyInfo(rawBody, contentType = '') {
+  const bodyText = typeof rawBody === 'string' ? rawBody : '';
+  const bytes = Buffer.byteLength(bodyText, 'utf-8');
+  if (!bodyText) {
+    return { json: null, text: null, bytes };
+  }
+
+  const normalizedType = String(contentType || '').toLowerCase();
+  const looksJson = normalizedType.includes('application/json')
+    || normalizedType.includes('+json')
+    || bodyText.trim().startsWith('{')
+    || bodyText.trim().startsWith('[');
+  if (looksJson) {
+    const parsed = safeParseJson(bodyText, null);
+    if (parsed && typeof parsed === 'object') {
+      return { json: parsed, text: null, bytes };
+    }
+  }
+  return { json: null, text: bodyText, bytes };
+}
+
+function toBufferBodyInfo(buffer, contentType = '') {
+  if (!buffer || !buffer.length) {
+    return { json: null, text: null, bytes: 0 };
+  }
+
+  const bytes = Number(buffer.length || 0);
+  const normalizedType = String(contentType || '').toLowerCase();
+  const isTextual = normalizedType.includes('json')
+    || normalizedType.startsWith('text/')
+    || normalizedType.includes('javascript')
+    || normalizedType.includes('xml');
+  if (!isTextual) {
+    return { json: null, text: null, bytes };
+  }
+
+  const text = buffer.toString('utf-8');
+  const looksJson = normalizedType.includes('json') || text.trim().startsWith('{') || text.trim().startsWith('[');
+  if (looksJson) {
+    const parsed = safeParseJson(text, null);
+    if (parsed && typeof parsed === 'object') {
+      return { json: parsed, text: null, bytes };
+    }
+  }
+  return { json: null, text, bytes };
+}
+
+function sanitizeMirrorHeaders(rawHeaders = {}) {
+  const blockedHeaders = new Set([
+    'authorization',
+    'cookie',
+    'x-bilm-ops-token',
+    'x-bilm-auth-bypass',
+    'x-bilm-auth-email',
+    'x-bilm-auth-uid'
+  ]);
+  const headers = {};
+  for (const [rawKey, rawValue] of Object.entries(rawHeaders || {})) {
+    const key = String(rawKey || '').trim().toLowerCase();
+    if (!key || blockedHeaders.has(key)) continue;
+    if (!/^[a-z0-9-]+$/.test(key)) continue;
+
+    if (Array.isArray(rawValue)) {
+      headers[key] = rawValue
+        .map((value) => String(value ?? '').trim())
+        .filter(Boolean)
+        .join(', ')
+        .slice(0, 2048);
+      continue;
+    }
+    headers[key] = String(rawValue ?? '').trim().slice(0, 2048);
+  }
+  return headers;
+}
+
+function searchParamsToObject(searchParams) {
+  const output = {};
+  for (const [key, value] of searchParams.entries()) {
+    if (!Object.prototype.hasOwnProperty.call(output, key)) {
+      output[key] = value;
+      continue;
+    }
+    if (Array.isArray(output[key])) {
+      output[key].push(value);
+      continue;
+    }
+    output[key] = [output[key], value];
+  }
+  return output;
+}
+
+function deriveMirrorUserId(searchParams, requestInfo, responseInfo) {
+  const direct = sanitizeMirrorUserId(searchParams.get('userId'));
+  if (direct) return direct;
+
+  const requestUser = sanitizeMirrorUserId(requestInfo?.json?.userId || requestInfo?.json?.uid);
+  if (requestUser) return requestUser;
+
+  const responseUser = sanitizeMirrorUserId(responseInfo?.json?.userId || responseInfo?.json?.uid);
+  if (responseUser) return responseUser;
+
+  return null;
+}
+
+function buildMirrorEvent({
+  req,
+  upstreamUrl,
+  requestBody,
+  requestContentType,
+  responseBuffer,
+  responseContentType,
+  upstreamStatus
+}) {
+  const requestInfo = toJsonBodyInfo(requestBody, requestContentType);
+  const responseInfo = toBufferBodyInfo(responseBuffer, responseContentType);
+  const occurredAt = new Date().toISOString();
+  const eventId = randomUUID();
+  const idempotencyKey = createHash('sha256')
+    .update(`${eventId}:${req.method}:${upstreamUrl.pathname}:${upstreamUrl.search}:${occurredAt}`)
+    .digest('hex');
+
+  return {
+    event_id: eventId,
+    idempotency_key: idempotencyKey,
+    source: 'data-api-proxy',
+    occurred_at: occurredAt,
+    mirrored_at: new Date().toISOString(),
+    user_id: deriveMirrorUserId(upstreamUrl.searchParams, requestInfo, responseInfo),
+    method: String(req.method || '').toUpperCase(),
+    path: upstreamUrl.pathname,
+    query_params: searchParamsToObject(upstreamUrl.searchParams),
+    request_headers: sanitizeMirrorHeaders(req.headers),
+    request_content_type: requestContentType || null,
+    request_body_json: requestInfo.json,
+    request_body_text: requestInfo.text,
+    request_body_bytes: requestInfo.bytes,
+    response_status: Number(upstreamStatus || 0),
+    response_content_type: responseContentType || null,
+    response_body_json: responseInfo.json,
+    response_body_text: responseInfo.text,
+    response_body_bytes: responseInfo.bytes,
+    retry_count: 0
+  };
+}
+
+function normalizeQueuedMirrorEntry(rawEntry) {
+  if (!rawEntry || typeof rawEntry !== 'object') return null;
+  const event = rawEntry.event && typeof rawEntry.event === 'object' ? rawEntry.event : null;
+  if (!event) return null;
+  const eventId = String(event.event_id || '').trim();
+  if (!eventId) return null;
+  return {
+    event,
+    retryCount: Math.max(0, Number(rawEntry.retryCount || 0) || 0),
+    nextAttemptAtMs: Math.max(0, Number(rawEntry.nextAttemptAtMs || 0) || 0),
+    lastError: String(rawEntry.lastError || '').slice(0, 2048)
+  };
+}
+
+async function persistMirrorQueueLocked() {
+  if (!SUPABASE_MIRROR_ACTIVE) return;
+  const targetDir = path.dirname(SUPABASE_MIRROR_QUEUE_FILE);
+  await fsp.mkdir(targetDir, { recursive: true });
+  if (!mirrorQueue.length) {
+    try {
+      await fsp.rm(SUPABASE_MIRROR_QUEUE_FILE, { force: true });
+    } catch {}
+    return;
+  }
+
+  const serialized = mirrorQueue.map((entry) => JSON.stringify(entry)).join('\n');
+  const tempPath = `${SUPABASE_MIRROR_QUEUE_FILE}.tmp`;
+  await fsp.writeFile(tempPath, `${serialized}\n`, 'utf-8');
+  await fsp.rename(tempPath, SUPABASE_MIRROR_QUEUE_FILE);
+}
+
+async function ensureMirrorQueueLoaded() {
+  if (!SUPABASE_MIRROR_ACTIVE || mirrorQueueLoaded) return;
+  await withMirrorQueueLock(async () => {
+    if (mirrorQueueLoaded) return;
+    try {
+      const rawFile = await fsp.readFile(SUPABASE_MIRROR_QUEUE_FILE, 'utf-8');
+      const entries = rawFile
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => normalizeQueuedMirrorEntry(safeParseJson(line, null)))
+        .filter(Boolean);
+      mirrorQueue = entries;
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        console.warn('Supabase mirror queue load failed:', error);
+      }
+      mirrorQueue = [];
+    }
+    mirrorQueueLoaded = true;
+  });
+}
+
+function scheduleMirrorRetryFromQueue() {
+  if (!SUPABASE_MIRROR_ACTIVE) return;
+  if (mirrorRetryTimer) {
+    clearTimeout(mirrorRetryTimer);
+    mirrorRetryTimer = null;
+  }
+  if (!mirrorQueue.length) return;
+
+  const nowMs = Date.now();
+  const nextAttemptAtMs = mirrorQueue.reduce((min, entry) => {
+    const nextAt = Number(entry?.nextAttemptAtMs || 0) || nowMs;
+    return Math.min(min, nextAt);
+  }, Number.MAX_SAFE_INTEGER);
+  const delayMs = Math.max(1000, Math.min(3_600_000, nextAttemptAtMs - nowMs));
+
+  mirrorRetryTimer = setTimeout(() => {
+    mirrorRetryTimer = null;
+    void flushMirrorQueue();
+  }, delayMs);
+}
+
+function buildSupabaseMirrorUrl() {
+  const url = new URL(`/rest/v1/${encodeURIComponent(SUPABASE_MIRROR_TABLE)}`, `${SUPABASE_PROJECT_URL}/`);
+  url.searchParams.set('on_conflict', 'event_id');
+  return url.toString();
+}
+
+async function postMirrorEventToSupabase(event) {
+  if (!SUPABASE_MIRROR_ACTIVE) return;
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), SUPABASE_MIRROR_TIMEOUT_MS);
+  try {
+    const response = await fetch(buildSupabaseMirrorUrl(), {
+      method: 'POST',
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE_KEY,
+        authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        'content-type': 'application/json',
+        prefer: 'resolution=merge-duplicates,return=minimal'
+      },
+      body: JSON.stringify([event]),
+      signal: abortController.signal
+    });
+    if (!response.ok) {
+      const bodyText = await response.text();
+      const error = new Error(`Supabase mirror write failed (${response.status}).`);
+      error.statusCode = response.status;
+      error.responseBody = bodyText.slice(0, 2048);
+      throw error;
+    }
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error('Supabase mirror write timed out.');
+      timeoutError.statusCode = 504;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function enqueueMirrorEvent(event, reason = '') {
+  if (!SUPABASE_MIRROR_ACTIVE || !event || typeof event !== 'object') return;
+  await ensureMirrorQueueLoaded();
+  await withMirrorQueueLock(async () => {
+    mirrorQueue.push({
+      event: {
+        ...event,
+        retry_count: Number(event.retry_count || 0) || 0
+      },
+      retryCount: Math.max(0, Number(event.retry_count || 0) || 0),
+      nextAttemptAtMs: Date.now() + SUPABASE_MIRROR_RETRY_INTERVAL_MS,
+      lastError: String(reason || '').slice(0, 2048)
+    });
+    await persistMirrorQueueLocked();
+  });
+  scheduleMirrorRetryFromQueue();
+}
+
+async function flushMirrorQueue() {
+  if (!SUPABASE_MIRROR_ACTIVE) return;
+  await ensureMirrorQueueLoaded();
+  if (mirrorFlushRunning) return;
+
+  mirrorFlushRunning = true;
+  try {
+    await withMirrorQueueLock(async () => {
+      if (!mirrorQueue.length) return;
+      const nowMs = Date.now();
+      let changed = false;
+      const nextQueue = [];
+
+      for (const queuedEntry of mirrorQueue) {
+        const normalizedEntry = normalizeQueuedMirrorEntry(queuedEntry);
+        if (!normalizedEntry) {
+          changed = true;
+          continue;
+        }
+        if (normalizedEntry.nextAttemptAtMs > nowMs) {
+          nextQueue.push(normalizedEntry);
+          continue;
+        }
+
+        const nextRetryCount = Math.max(0, normalizedEntry.retryCount);
+        try {
+          // Keep event retry metadata accurate in Supabase.
+          normalizedEntry.event.retry_count = nextRetryCount;
+          await postMirrorEventToSupabase(normalizedEntry.event);
+          mirrorLastSuccessAtMs = Date.now();
+          changed = true;
+        } catch (error) {
+          const updatedRetryCount = nextRetryCount + 1;
+          const backoffMs = Math.min(
+            15 * 60_000,
+            SUPABASE_MIRROR_RETRY_INTERVAL_MS * (2 ** Math.min(updatedRetryCount, 6))
+          );
+          mirrorLastErrorAtMs = Date.now();
+          mirrorLastError = String(error?.message || 'Supabase mirror queue retry failed.').slice(0, 2048);
+          changed = true;
+          nextQueue.push({
+            event: {
+              ...normalizedEntry.event,
+              retry_count: updatedRetryCount
+            },
+            retryCount: updatedRetryCount,
+            nextAttemptAtMs: Date.now() + backoffMs,
+            lastError: mirrorLastError
+          });
+        }
+      }
+
+      if (changed || nextQueue.length !== mirrorQueue.length) {
+        mirrorQueue = nextQueue;
+        await persistMirrorQueueLocked();
+      } else {
+        mirrorQueue = nextQueue;
+      }
+    });
+  } finally {
+    mirrorFlushRunning = false;
+    scheduleMirrorRetryFromQueue();
+  }
+}
+
+async function mirrorDataApiTraffic({
+  req,
+  upstreamUrl,
+  requestBody = '',
+  requestContentType = '',
+  upstreamStatus = 0,
+  responseBuffer = Buffer.alloc(0),
+  responseContentType = ''
+}) {
+  if (!SUPABASE_MIRROR_ACTIVE) return;
+  if (!isMirrorableDataApiPath(upstreamUrl.pathname)) return;
+  if (String(req.method || '').toUpperCase() === 'HEAD') return;
+  if (!(upstreamStatus >= 200 && upstreamStatus < 300)) return;
+
+  const event = buildMirrorEvent({
+    req,
+    upstreamUrl,
+    requestBody,
+    requestContentType,
+    responseBuffer,
+    responseContentType,
+    upstreamStatus
+  });
+
+  try {
+    await postMirrorEventToSupabase(event);
+    mirrorLastSuccessAtMs = Date.now();
+  } catch (error) {
+    mirrorLastErrorAtMs = Date.now();
+    mirrorLastError = String(error?.message || 'Supabase mirror write failed.').slice(0, 2048);
+    await enqueueMirrorEvent(event, mirrorLastError);
+  }
+}
+
 async function handleAniListProxy(req, res) {
   const corsHeaders = buildCorsHeaders(req);
   if (req.method === 'OPTIONS') {
@@ -1053,6 +1547,148 @@ async function handleVidsrcLatestProxy(req, res, searchParams) {
       return;
     }
     sendJson(res, 502, { error: 'VidSrc proxy request failed' }, {
+      ...corsHeaders,
+      ...rateLimitHeadersMap,
+      'cache-control': 'no-store'
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function handleDataApiProxy(req, res, rawPathname, url) {
+  const corsHeaders = buildCorsHeaders(req);
+  if (req.method === 'OPTIONS') {
+    const preflightCorsHeaders = buildCorsHeaders(req, {
+      methods: 'GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS',
+      defaultAllowHeaders: 'accept, content-type, authorization',
+      includePreflight: true
+    });
+    sendNoContent(res, 204, {
+      ...preflightCorsHeaders,
+      allow: 'GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS',
+      'cache-control': 'no-store'
+    });
+    return;
+  }
+
+  const method = String(req.method || '').toUpperCase();
+  const allowedMethods = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
+  if (!allowedMethods.has(method)) {
+    sendJson(res, 405, { error: 'Method Not Allowed' }, {
+      ...corsHeaders,
+      allow: 'GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS',
+      'cache-control': 'no-store'
+    });
+    return;
+  }
+
+  const { blocked, headers: rateLimitHeadersMap } = enforceRateLimit(req, res, 'data', corsHeaders);
+  if (blocked) return;
+
+  const upstreamPath = rawPathname === '/api/data'
+    ? '/'
+    : rawPathname.replace(/^\/api\/data/, '') || '/';
+
+  let upstreamUrl;
+  try {
+    upstreamUrl = new URL(upstreamPath, `${DATA_API_BASE}/`);
+  } catch {
+    sendJson(res, 500, { error: 'Data API base URL is invalid' }, {
+      ...corsHeaders,
+      ...rateLimitHeadersMap,
+      'cache-control': 'no-store'
+    });
+    return;
+  }
+
+  url.searchParams.forEach((value, key) => {
+    upstreamUrl.searchParams.append(key, value);
+  });
+
+  let requestBody = '';
+  const supportsBody = method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE';
+  if (supportsBody) {
+    try {
+      requestBody = await readRequestBody(req, 2 * 1024 * 1024);
+    } catch (error) {
+      if (error?.statusCode === 413) {
+        sendJson(res, 413, { error: 'Payload too large' }, {
+          ...corsHeaders,
+          ...rateLimitHeadersMap,
+          'cache-control': 'no-store'
+        });
+        return;
+      }
+      sendJson(res, 400, { error: 'Invalid request payload' }, {
+        ...corsHeaders,
+        ...rateLimitHeadersMap,
+        'cache-control': 'no-store'
+      });
+      return;
+    }
+  }
+
+  const requestHeaders = {
+    accept: sanitizeAcceptHeader(req.headers.accept)
+  };
+  const authHeader = String(req.headers.authorization || '').trim();
+  if (authHeader) requestHeaders.authorization = authHeader;
+
+  const contentType = String(req.headers['content-type'] || '').trim();
+  if (contentType) requestHeaders['content-type'] = contentType;
+
+  const abortController = new AbortController();
+  const timeoutId = setTimeout(() => abortController.abort(), 12_000);
+  try {
+    const upstream = await fetch(upstreamUrl.toString(), {
+      method,
+      headers: requestHeaders,
+      body: supportsBody && requestBody ? requestBody : undefined,
+      signal: abortController.signal
+    });
+
+    const responseBuffer = Buffer.from(await upstream.arrayBuffer());
+    const responseContentType = String(upstream.headers.get('content-type') || '').trim();
+
+    const responseHeaders = {
+      ...BASE_SECURITY_HEADERS,
+      ...corsHeaders,
+      ...rateLimitHeadersMap,
+      'cache-control': 'no-store'
+    };
+    if (responseContentType) {
+      responseHeaders['content-type'] = responseContentType;
+    }
+
+    res.writeHead(upstream.status, responseHeaders);
+    if (method === 'HEAD') {
+      res.end();
+    } else {
+      res.end(responseBuffer);
+    }
+
+    void mirrorDataApiTraffic({
+      req,
+      upstreamUrl,
+      requestBody,
+      requestContentType: contentType,
+      upstreamStatus: upstream.status,
+      responseBuffer,
+      responseContentType
+    }).catch((error) => {
+      console.warn('Data API mirror task failed:', error);
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      sendJson(res, 504, { error: 'Data API upstream timed out' }, {
+        ...corsHeaders,
+        ...rateLimitHeadersMap,
+        'cache-control': 'no-store'
+      });
+      return;
+    }
+    sendJson(res, 502, { error: 'Data API proxy request failed' }, {
       ...corsHeaders,
       ...rateLimitHeadersMap,
       'cache-control': 'no-store'
@@ -1465,6 +2101,70 @@ async function handleAdminConfig(req, res) {
   });
 }
 
+async function handleMirrorStatus(req, res) {
+  const corsHeaders = buildCorsHeaders(req);
+  if (req.method === 'OPTIONS') {
+    const preflightCorsHeaders = buildCorsHeaders(req, {
+      methods: 'GET, OPTIONS',
+      defaultAllowHeaders: 'content-type, authorization, x-bilm-ops-token',
+      includePreflight: true
+    });
+    sendNoContent(res, 204, {
+      ...preflightCorsHeaders,
+      allow: 'GET, OPTIONS',
+      'cache-control': 'no-store'
+    });
+    return;
+  }
+
+  if (req.method !== 'GET') {
+    sendJson(res, 405, { error: 'Method Not Allowed' }, {
+      ...corsHeaders,
+      allow: 'GET, OPTIONS',
+      'cache-control': 'no-store'
+    });
+    return;
+  }
+
+  const { blocked, headers: rateLimitHeadersMap } = enforceRateLimit(req, res, 'healthcheck', corsHeaders);
+  if (blocked) return;
+  if (!requireOpsTokenAuth(req, res, { corsHeaders, rateLimitHeadersMap })) return;
+
+  if (SUPABASE_MIRROR_ACTIVE) {
+    await ensureMirrorQueueLoaded();
+  }
+
+  const nowMs = Date.now();
+  const queueDepth = Array.isArray(mirrorQueue) ? mirrorQueue.length : 0;
+  const oldestQueuedAtMs = queueDepth
+    ? mirrorQueue.reduce((min, entry) => {
+      const occurredAtMs = Date.parse(String(entry?.event?.occurred_at || '')) || 0;
+      return occurredAtMs > 0 ? Math.min(min, occurredAtMs) : min;
+    }, Number.MAX_SAFE_INTEGER)
+    : 0;
+  const nextRetryAtMs = queueDepth
+    ? mirrorQueue.reduce((min, entry) => Math.min(min, Number(entry?.nextAttemptAtMs || 0) || nowMs), Number.MAX_SAFE_INTEGER)
+    : 0;
+
+  sendJson(res, 200, {
+    ok: true,
+    enabled: SUPABASE_MIRROR_ENABLED,
+    active: SUPABASE_MIRROR_ACTIVE,
+    dataApiBase: DATA_API_BASE,
+    queueFile: SUPABASE_MIRROR_QUEUE_FILE,
+    queueDepth,
+    oldestQueuedAgeMs: oldestQueuedAtMs > 0 ? Math.max(0, nowMs - oldestQueuedAtMs) : 0,
+    nextRetryAtMs: nextRetryAtMs > 0 ? nextRetryAtMs : null,
+    lastSuccessAtMs: mirrorLastSuccessAtMs || null,
+    lastErrorAtMs: mirrorLastErrorAtMs || null,
+    lastError: mirrorLastError || null
+  }, {
+    ...corsHeaders,
+    ...rateLimitHeadersMap,
+    'cache-control': 'no-store'
+  });
+}
+
 async function routeRequest(req, res) {
   const rawRequestTarget = String(req.url || '/');
   const querySeparatorIndex = rawRequestTarget.indexOf('?');
@@ -1489,6 +2189,10 @@ async function routeRequest(req, res) {
     await handleAdminConfig(req, res);
     return;
   }
+  if (rawPathname === '/api/admin/mirror-status') {
+    await handleMirrorStatus(req, res);
+    return;
+  }
   if (rawPathname === '/api/health/check') {
     await handleHealthCheck(req, res);
     return;
@@ -1503,6 +2207,10 @@ async function routeRequest(req, res) {
   }
   if (rawPathname === '/api/chat' || rawPathname.startsWith('/api/chat/')) {
     await handleChatApiProxy(req, res, rawPathname, url);
+    return;
+  }
+  if (rawPathname === '/api/data' || rawPathname.startsWith('/api/data/')) {
+    await handleDataApiProxy(req, res, rawPathname, url);
     return;
   }
   if (url.pathname === '/api' || url.pathname.startsWith('/api/')) {
@@ -1528,4 +2236,22 @@ const server = http.createServer((req, res) => {
 
 server.listen(port, '0.0.0.0', () => {
   console.log(`BILM server listening on http://0.0.0.0:${port}`);
+  if (!SUPABASE_MIRROR_ENABLED) return;
+
+  if (!SUPABASE_MIRROR_ACTIVE) {
+    console.warn('Supabase mirror disabled: missing SUPABASE_PROJECT_URL and/or SUPABASE_SERVICE_ROLE_KEY.');
+    return;
+  }
+
+  void ensureMirrorQueueLoaded()
+    .then(() => {
+      if (mirrorQueue.length) {
+        void flushMirrorQueue();
+      } else {
+        scheduleMirrorRetryFromQueue();
+      }
+    })
+    .catch((error) => {
+      console.warn('Supabase mirror startup initialization failed:', error);
+    });
 });
