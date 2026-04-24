@@ -2,7 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 
 const rootDir = path.resolve(process.cwd());
 const port = Number(process.env.PORT || 8080);
@@ -192,6 +192,46 @@ const RATE_LIMITS = Object.freeze({
     windowMs: parseEnvInt('HEALTH_CHECK_RATE_WINDOW_MS', 60_000, { min: 1000, max: 3_600_000 })
   })
 });
+const STATIC_PUBLIC_ROOTS = new Set([
+  'home',
+  'movies',
+  'tv',
+  'search',
+  'settings',
+  'random',
+  'shared',
+  'games'
+]);
+const STATIC_PUBLIC_ROOT_FILES = new Set([
+  'index.html',
+  'manifest.json',
+  'icon.png',
+  'sw.js',
+  'favicon.ico',
+  'robots.txt'
+]);
+const STATIC_BLOCKED_SEGMENTS = new Set([
+  '.git',
+  '.wrangler',
+  'node_modules',
+  'supabase',
+  'playwright',
+  'runtime'
+]);
+const STATIC_BLOCKED_FILENAMES = new Set([
+  '.dockerignore',
+  '.env',
+  '.env.example',
+  '.gitignore',
+  'dockerfile',
+  'package-lock.json',
+  'package.json',
+  'playwright.config.js',
+  'readme.md',
+  'server.mjs',
+  'vitest.config.js',
+  'wrangler.jsonc'
+]);
 const CORS_ALLOWED_ORIGINS = new Set([
   'https://watchbilm.org',
   'https://www.watchbilm.org',
@@ -324,6 +364,17 @@ function normalizeRequestOrigin(rawOrigin) {
   }
 }
 
+function secureCompareStrings(left, right) {
+  const leftBuffer = Buffer.from(String(left || ''), 'utf8');
+  const rightBuffer = Buffer.from(String(right || ''), 'utf8');
+  if (!leftBuffer.length || leftBuffer.length !== rightBuffer.length) return false;
+  try {
+    return timingSafeEqual(leftBuffer, rightBuffer);
+  } catch {
+    return false;
+  }
+}
+
 function appendVary(existingValue, nextValue) {
   const existing = String(existingValue || '')
     .split(',')
@@ -403,7 +454,7 @@ function requireOpsTokenAuth(req, res, { corsHeaders = {}, rateLimitHeadersMap =
     return false;
   }
 
-  if (token !== BILM_OPS_TOKEN) {
+  if (!secureCompareStrings(token, BILM_OPS_TOKEN)) {
     sendJson(res, 403, {
       error: 'Forbidden',
       code: 'invalid_ops_token'
@@ -720,6 +771,30 @@ function streamFile(req, res, filePath, stat) {
   stream.pipe(res);
 }
 
+function isStaticPathAllowed(decodedPath = '/') {
+  const normalizedPath = String(decodedPath || '/').replace(/\\/g, '/');
+  const trimmedPath = normalizedPath.startsWith('/') ? normalizedPath.slice(1) : normalizedPath;
+  if (!trimmedPath) return true;
+
+  const segments = trimmedPath
+    .split('/')
+    .map((segment) => String(segment || '').trim())
+    .filter(Boolean);
+  if (!segments.length) return true;
+
+  const loweredSegments = segments.map((segment) => segment.toLowerCase());
+  if (loweredSegments.some((segment) => segment === '.' || segment === '..')) return false;
+  if (loweredSegments.some((segment) => segment.startsWith('.'))) return false;
+  if (loweredSegments.some((segment) => STATIC_BLOCKED_SEGMENTS.has(segment))) return false;
+
+  const topLevelSegment = loweredSegments[0];
+  if (segments.length === 1 && STATIC_PUBLIC_ROOT_FILES.has(topLevelSegment)) {
+    return true;
+  }
+  if (STATIC_BLOCKED_FILENAMES.has(topLevelSegment)) return false;
+  return STATIC_PUBLIC_ROOTS.has(topLevelSegment);
+}
+
 async function serveStatic(req, res, pathname) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     sendJson(res, 405, { error: 'Method Not Allowed' }, {
@@ -734,6 +809,10 @@ async function serveStatic(req, res, pathname) {
     decodedPath = decodeURIComponent(pathname || '/');
   } catch {
     sendJson(res, 400, { error: 'Bad Request' }, { 'cache-control': 'no-store' });
+    return;
+  }
+  if (!isStaticPathAllowed(decodedPath)) {
+    sendJson(res, 404, { error: 'Not Found' }, { 'cache-control': 'no-store' });
     return;
   }
 
@@ -2157,7 +2236,6 @@ async function handleMirrorStatus(req, res) {
     enabled: SUPABASE_MIRROR_ENABLED,
     active: SUPABASE_MIRROR_ACTIVE,
     dataApiBase: DATA_API_BASE,
-    queueFile: SUPABASE_MIRROR_QUEUE_FILE,
     queueDepth,
     oldestQueuedAgeMs: oldestQueuedAtMs > 0 ? Math.max(0, nowMs - oldestQueuedAtMs) : 0,
     nextRetryAtMs: nextRetryAtMs > 0 ? nextRetryAtMs : null,
