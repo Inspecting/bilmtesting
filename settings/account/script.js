@@ -1640,9 +1640,11 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       await ensureAuthReady();
       await window.bilmAuth.setUsername(usernameInput.value.trim());
-      statusText.textContent = 'Username saved.';
+      statusText.textContent = 'Display name saved.';
+      showToast('Display name saved.', 'success');
     } catch (error) {
-      statusText.textContent = `Username update failed: ${error.message}`;
+      statusText.textContent = `Display name update failed: ${error.message}`;
+      showToast('Display name update failed.', 'error');
     }
   });
 
@@ -1792,14 +1794,17 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       manualFirebaseBackupBtn.disabled = true;
       statusText.textContent = 'Running backup...';
+      showToast('Running backup...', 'info', 1200);
       await window.bilmAuth.runManualFirebaseBackup({
         reason: 'manual-account-sync',
         source: 'settings-account'
       });
       statusText.textContent = 'Backup completed.';
+      showToast('Backup completed.', 'success');
       refreshFirebaseBackupStatus();
     } catch (error) {
       statusText.textContent = `Backup failed: ${error.message}`;
+      showToast('Backup failed.', 'error');
       refreshFirebaseBackupStatus();
     } finally {
       window.setTimeout(() => {

@@ -36,6 +36,8 @@ const APP_ROUTE_PATTERN = /^\/(?:home|movies|tv|search|settings|random|test|shar
 const HOME_ROW_APPEND_SIZE = 5;
 const HOME_ROW_MIN_INITIAL_COUNT = 3;
 const HOME_ROW_RENDER_CHUNK_SIZE = 8;
+const HOME_SEARCH_SUGGEST_MAX = 8;
+const HOME_SEARCH_SUGGEST_DEBOUNCE_MS = 180;
 
 function normalizeInternalAppPath(pathname = '') {
   const rawPath = String(pathname || '').trim();
@@ -52,6 +54,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const searchInput = document.getElementById('searchInput');
   const searchBtn = document.getElementById('searchBtn');
   const homeSearchForm = document.getElementById('homeSearchForm');
+  const homeSearchSuggestPanel = document.getElementById('homeSearchSuggestPanel');
+  const homeSearchSuggestList = document.getElementById('homeSearchSuggestList');
+  const homeSearchSuggestHint = document.getElementById('homeSearchSuggestHint');
 
   const continueWatchingSection = document.getElementById('continueWatchingSection');
   const favoritesSection = document.getElementById('favoritesSection');
@@ -108,6 +113,250 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.querySelector('main').classList.add('visible');
 
+  let homeSuggestDebounceTimer = null;
+  let homeSuggestAbortController = null;
+  let homeSuggestToken = 0;
+
+  function normalizeSearchText(value = '') {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  function levenshteinDistance(left = '', right = '') {
+    const a = normalizeSearchText(left);
+    const b = normalizeSearchText(right);
+    if (!a || !b) return Number.MAX_SAFE_INTEGER;
+    if (a === b) return 0;
+    const matrix = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let row = 0; row <= a.length; row += 1) matrix[row][0] = row;
+    for (let column = 0; column <= b.length; column += 1) matrix[0][column] = column;
+    for (let row = 1; row <= a.length; row += 1) {
+      for (let column = 1; column <= b.length; column += 1) {
+        const cost = a[row - 1] === b[column - 1] ? 0 : 1;
+        matrix[row][column] = Math.min(
+          matrix[row - 1][column] + 1,
+          matrix[row][column - 1] + 1,
+          matrix[row - 1][column - 1] + cost
+        );
+      }
+    }
+    return matrix[a.length][b.length];
+  }
+
+  function resolveDidYouMeanQuery(query = '', candidates = []) {
+    const normalizedQuery = normalizeSearchText(query);
+    if (normalizedQuery.length < 3) return '';
+    const uniqueCandidates = [...new Set((Array.isArray(candidates) ? candidates : [])
+      .map((candidate) => String(candidate || '').trim())
+      .filter(Boolean))];
+    let bestCandidate = '';
+    let bestDistance = Number.MAX_SAFE_INTEGER;
+    const maxDistance = Math.max(2, Math.floor(normalizedQuery.length * 0.35));
+    uniqueCandidates.forEach((candidate) => {
+      const normalizedCandidate = normalizeSearchText(candidate);
+      if (!normalizedCandidate || normalizedCandidate === normalizedQuery) return;
+      const distance = levenshteinDistance(normalizedQuery, normalizedCandidate);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestCandidate = candidate;
+      }
+    });
+    if (!bestCandidate || bestDistance > maxDistance) return '';
+    return bestCandidate;
+  }
+
+  function clearHomeSuggestRequest() {
+    homeSuggestToken += 1;
+    if (homeSuggestDebounceTimer) {
+      window.clearTimeout(homeSuggestDebounceTimer);
+      homeSuggestDebounceTimer = null;
+    }
+    if (homeSuggestAbortController) {
+      try {
+        homeSuggestAbortController.abort();
+      } catch {
+        // Ignore abort failures.
+      }
+      homeSuggestAbortController = null;
+    }
+  }
+
+  function hideHomeSearchSuggestions() {
+    if (homeSearchSuggestPanel) homeSearchSuggestPanel.hidden = true;
+    if (homeSearchSuggestList) homeSearchSuggestList.innerHTML = '';
+    if (homeSearchSuggestHint) homeSearchSuggestHint.innerHTML = '';
+  }
+
+  async function fetchHomeSearchSuggestions(query, { signal } = {}) {
+    const trimmedQuery = String(query || '').trim();
+    if (trimmedQuery.length < 2) return [];
+    const encodedQuery = encodeURIComponent(trimmedQuery);
+    const primaryUrl = `${window.location.origin}${withBase(`/api/tmdb/search/multi?query=${encodedQuery}&include_adult=false&page=1`)}`;
+    const fallbackUrl = `https://storage-api.watchbilm.org/media/tmdb/search/multi?query=${encodedQuery}&include_adult=false&page=1`;
+    const requestUrls = [primaryUrl, fallbackUrl];
+
+    let payload = null;
+    for (const requestUrl of requestUrls) {
+      try {
+        const response = await fetch(requestUrl, {
+          signal,
+          headers: { accept: 'application/json' }
+        });
+        if (!response.ok) continue;
+        payload = await response.json();
+        break;
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+      }
+    }
+    if (!payload || !Array.isArray(payload?.results)) return [];
+
+    const unique = new Map();
+    payload.results.forEach((item) => {
+      const mediaType = String(item?.media_type || '').trim().toLowerCase();
+      if (mediaType !== 'movie' && mediaType !== 'tv') return;
+      const label = String(item?.title || item?.name || '').trim();
+      if (!label) return;
+      const normalizedLabel = normalizeSearchText(label);
+      const year = String(item?.release_date || item?.first_air_date || '').slice(0, 4).trim();
+      const typeLabel = mediaType === 'movie' ? 'Movie' : 'TV';
+      const key = `${normalizedLabel}:${typeLabel}`;
+      if (unique.has(key)) return;
+      unique.set(key, {
+        label,
+        meta: [typeLabel, year].filter(Boolean).join(' · '),
+        score: Number(item?.popularity || 0) || 0
+      });
+    });
+
+    return [...unique.values()]
+      .sort((left, right) => (Number(right.score || 0) || 0) - (Number(left.score || 0) || 0))
+      .slice(0, HOME_SEARCH_SUGGEST_MAX);
+  }
+
+  function setHomeSearchHint({ text = '', didYouMeanQuery = '' } = {}) {
+    if (!homeSearchSuggestHint) return;
+    homeSearchSuggestHint.innerHTML = '';
+    if (didYouMeanQuery) {
+      const prefix = document.createTextNode('Did you mean ');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = `"${didYouMeanQuery}"`;
+      button.addEventListener('click', () => {
+        searchInput.value = didYouMeanQuery;
+        runSearch();
+      });
+      homeSearchSuggestHint.append(prefix, button, document.createTextNode('?'));
+      return;
+    }
+    homeSearchSuggestHint.textContent = String(text || '').trim();
+  }
+
+  function renderHomeSearchSuggestions({ query = '', suggestions = [], didYouMean = '' } = {}) {
+    if (!homeSearchSuggestPanel || !homeSearchSuggestList) return;
+    const trimmedQuery = String(query || '').trim();
+    homeSearchSuggestList.innerHTML = '';
+    suggestions.forEach((entry) => {
+      const label = String(entry?.label || '').trim();
+      if (!label) return;
+      const item = document.createElement('li');
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'home-search-suggest-item';
+      button.setAttribute('role', 'option');
+      button.addEventListener('click', () => {
+        searchInput.value = label;
+        runSearch();
+      });
+
+      const labelEl = document.createElement('span');
+      labelEl.className = 'home-search-suggest-label';
+      labelEl.textContent = label;
+      button.appendChild(labelEl);
+
+      const meta = String(entry?.meta || '').trim();
+      if (meta) {
+        const metaEl = document.createElement('span');
+        metaEl.className = 'home-search-suggest-meta';
+        metaEl.textContent = meta;
+        button.appendChild(metaEl);
+      }
+
+      item.appendChild(button);
+      homeSearchSuggestList.appendChild(item);
+    });
+
+    if (!trimmedQuery || trimmedQuery.length < 2) {
+      homeSearchSuggestPanel.hidden = true;
+      return;
+    }
+
+    homeSearchSuggestPanel.hidden = false;
+    if (didYouMean) {
+      setHomeSearchHint({ didYouMeanQuery: didYouMean });
+    } else if (suggestions.length > 0) {
+      setHomeSearchHint({ text: 'Pick a suggestion or press Enter to search.' });
+    } else {
+      setHomeSearchHint({ text: 'No suggestions yet. Press Enter to search.' });
+    }
+  }
+
+  async function refreshHomeSearchSuggestions(query = '') {
+    const trimmedQuery = String(query || '').trim();
+    const isDesktopViewport = window.matchMedia('(min-width: 769px)').matches;
+    if (!isDesktopViewport || trimmedQuery.length < 2) {
+      hideHomeSearchSuggestions();
+      return;
+    }
+
+    const settings = window.bilmTheme?.getSettings?.() || {};
+    if (settings.incognito === true) {
+      if (homeSearchSuggestPanel) homeSearchSuggestPanel.hidden = false;
+      if (homeSearchSuggestList) homeSearchSuggestList.innerHTML = '';
+      setHomeSearchHint({ text: 'Incognito is on. Press Enter to search privately.' });
+      return;
+    }
+
+    const requestToken = homeSuggestToken + 1;
+    homeSuggestToken = requestToken;
+    if (homeSuggestAbortController) {
+      try {
+        homeSuggestAbortController.abort();
+      } catch {
+        // Ignore abort failures.
+      }
+    }
+    homeSuggestAbortController = new AbortController();
+    const signal = homeSuggestAbortController.signal;
+    try {
+      const suggestions = await fetchHomeSearchSuggestions(trimmedQuery, { signal });
+      if (requestToken !== homeSuggestToken) return;
+      const didYouMean = resolveDidYouMeanQuery(trimmedQuery, suggestions.map((entry) => entry.label));
+      renderHomeSearchSuggestions({
+        query: trimmedQuery,
+        suggestions,
+        didYouMean
+      });
+    } catch (error) {
+      if (error?.name === 'AbortError') return;
+      if (requestToken !== homeSuggestToken) return;
+      renderHomeSearchSuggestions({
+        query: trimmedQuery,
+        suggestions: [],
+        didYouMean: ''
+      });
+    }
+  }
+
+  function scheduleHomeSearchSuggestRefresh() {
+    if (homeSuggestDebounceTimer) {
+      window.clearTimeout(homeSuggestDebounceTimer);
+    }
+    homeSuggestDebounceTimer = window.setTimeout(() => {
+      homeSuggestDebounceTimer = null;
+      void refreshHomeSearchSuggestions(searchInput.value);
+    }, HOME_SEARCH_SUGGEST_DEBOUNCE_MS);
+  }
+
   function runSearch() {
     const query = searchInput.value.trim();
     if (!query) {
@@ -126,6 +375,8 @@ document.addEventListener('DOMContentLoaded', () => {
       saveList(SEARCH_HISTORY_KEY, next);
     }
 
+    clearHomeSuggestRequest();
+    hideHomeSearchSuggestions();
     window.location.href = `${withBase('/search/')}?q=${encodeURIComponent(query)}`;
   }
 
@@ -143,7 +394,30 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') {
       e.preventDefault();
       runSearch();
+      return;
     }
+    if (e.key === 'Escape') {
+      hideHomeSearchSuggestions();
+    }
+  });
+  searchInput.addEventListener('input', () => {
+    scheduleHomeSearchSuggestRefresh();
+  });
+  searchInput.addEventListener('focus', () => {
+    if (searchInput.value.trim().length >= 2) {
+      scheduleHomeSearchSuggestRefresh();
+    }
+  });
+  searchInput.addEventListener('blur', () => {
+    window.setTimeout(() => {
+      const activeElement = document.activeElement;
+      if (activeElement && homeSearchSuggestPanel?.contains(activeElement)) return;
+      hideHomeSearchSuggestions();
+    }, 120);
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (homeSearchForm?.contains(event.target)) return;
+    hideHomeSearchSuggestions();
   });
 
   function loadList(key) {
@@ -571,6 +845,29 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  function enableHorizontalWheelScroll(container) {
+    if (!container || container.dataset.horizontalWheelBound === 'true') return;
+    container.dataset.horizontalWheelBound = 'true';
+
+    container.addEventListener('wheel', (event) => {
+      if (event.defaultPrevented) return;
+      if (container.scrollWidth <= container.clientWidth + 1) return;
+
+      const absDeltaX = Math.abs(event.deltaX);
+      const absDeltaY = Math.abs(event.deltaY);
+      if (!absDeltaX && !absDeltaY) return;
+
+      const delta = absDeltaY > absDeltaX ? event.deltaY : event.deltaX;
+      if (!delta) return;
+
+      const previousScrollLeft = container.scrollLeft;
+      container.scrollLeft += delta;
+      if (container.scrollLeft !== previousScrollLeft) {
+        event.preventDefault();
+      }
+    }, { passive: false });
+  }
+
   function getRowAdaptiveInitialCount(container) {
     if (!container) return HOME_ROW_MIN_INITIAL_COUNT;
     const rowWidth = Number(container.clientWidth || 0);
@@ -586,6 +883,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderRow(container, items, emptyMessage, section) {
+    enableHorizontalWheelScroll(container);
     if (container.__bilmRowObserver) {
       container.__bilmRowObserver.disconnect();
       container.__bilmRowObserver = null;

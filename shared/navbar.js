@@ -22,9 +22,9 @@ function detectBasePath() {
 }
 
 const BASE_PATH = detectBasePath();
-const NAVBAR_ASSET_CACHE_KEY = 'bilm-navbar-assets-v4';
+const NAVBAR_ASSET_CACHE_KEY = 'bilm-navbar-assets-v6';
 const NAVBAR_ASSET_CACHE_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-const LEGACY_NAVBAR_ASSET_CACHE_KEYS = ['bilm-navbar-assets-v1', 'bilm-navbar-assets-v2', 'bilm-navbar-assets-v3'];
+const LEGACY_NAVBAR_ASSET_CACHE_KEYS = ['bilm-navbar-assets-v1', 'bilm-navbar-assets-v2', 'bilm-navbar-assets-v3', 'bilm-navbar-assets-v4', 'bilm-navbar-assets-v5'];
 
 function withBase(path) {
   const normalized = path.startsWith('/') ? path : `/${path}`;
@@ -370,6 +370,10 @@ function loadToastScript() {
 
   const SEARCH_HISTORY_KEY = 'bilm-search-history';
   const INCOGNITO_SEARCH_MAP_KEY = 'bilm-incognito-search-map';
+  const SEARCH_MAX_SUGGESTIONS = 8;
+  const SEARCH_SUGGEST_DEBOUNCE_MS = 220;
+  const DESKTOP_SEARCH_SUGGEST_DEBOUNCE_MS = 180;
+  const MOBILE_SEARCH_MAX_HISTORY_ITEMS = 10;
   const storage = window.bilmTheme?.storage || {
     getJSON: (key, fallback = []) => {
       try {
@@ -436,6 +440,128 @@ function loadToastScript() {
     saveList(SEARCH_HISTORY_KEY, next);
   }
 
+  function normalizeSearchText(value = '') {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  function getSearchHistoryEntries({ limit = 120 } = {}) {
+    const settings = window.bilmTheme?.getSettings?.() || {};
+    if (settings.searchHistory === false || settings.incognito === true) return [];
+    return loadList(SEARCH_HISTORY_KEY)
+      .map((entry) => ({
+        query: String(entry?.query || '').trim(),
+        updatedAt: Number(entry?.updatedAt || 0) || 0
+      }))
+      .filter((entry) => entry.query.length > 0)
+      .slice(0, Math.max(0, Number(limit || 0) || 0));
+  }
+
+  function removeSearchHistoryEntry(query) {
+    const normalizedQuery = normalizeSearchText(query);
+    if (!normalizedQuery) return;
+    const next = getSearchHistoryEntries({ limit: 120 })
+      .filter((entry) => normalizeSearchText(entry.query) !== normalizedQuery);
+    saveList(SEARCH_HISTORY_KEY, next);
+  }
+
+  function getMobileHistoryLimit() {
+    const viewportHeight = Math.max(320, Number(window.innerHeight || 0) || 0);
+    const estimatedRowHeight = 52;
+    const availableRows = Math.floor((viewportHeight - 220) / estimatedRowHeight);
+    return Math.max(4, Math.min(MOBILE_SEARCH_MAX_HISTORY_ITEMS, availableRows || 0));
+  }
+
+  function levenshteinDistance(left = '', right = '') {
+    const a = normalizeSearchText(left);
+    const b = normalizeSearchText(right);
+    if (!a || !b) return Number.MAX_SAFE_INTEGER;
+    if (a === b) return 0;
+    const matrix = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let row = 0; row <= a.length; row += 1) matrix[row][0] = row;
+    for (let column = 0; column <= b.length; column += 1) matrix[0][column] = column;
+    for (let row = 1; row <= a.length; row += 1) {
+      for (let column = 1; column <= b.length; column += 1) {
+        const cost = a[row - 1] === b[column - 1] ? 0 : 1;
+        matrix[row][column] = Math.min(
+          matrix[row - 1][column] + 1,
+          matrix[row][column - 1] + 1,
+          matrix[row - 1][column - 1] + cost
+        );
+      }
+    }
+    return matrix[a.length][b.length];
+  }
+
+  function resolveDidYouMeanQuery(query = '', candidates = []) {
+    const normalizedQuery = normalizeSearchText(query);
+    if (normalizedQuery.length < 3) return '';
+    const uniqueCandidates = [...new Set((Array.isArray(candidates) ? candidates : [])
+      .map((candidate) => String(candidate || '').trim())
+      .filter(Boolean))];
+    let bestCandidate = '';
+    let bestDistance = Number.MAX_SAFE_INTEGER;
+    const maxDistance = Math.max(2, Math.floor(normalizedQuery.length * 0.35));
+    uniqueCandidates.forEach((candidate) => {
+      const normalizedCandidate = normalizeSearchText(candidate);
+      if (!normalizedCandidate || normalizedCandidate === normalizedQuery) return;
+      const distance = levenshteinDistance(normalizedQuery, normalizedCandidate);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestCandidate = candidate;
+      }
+    });
+    if (!bestCandidate || bestDistance > maxDistance) return '';
+    return bestCandidate;
+  }
+
+  async function fetchSearchSuggestions(query, { signal } = {}) {
+    const trimmedQuery = String(query || '').trim();
+    if (trimmedQuery.length < 2) return [];
+
+    const encodedQuery = encodeURIComponent(trimmedQuery);
+    const primaryUrl = `${window.location.origin}${withBase(`/api/tmdb/search/multi?query=${encodedQuery}&include_adult=false&page=1`)}`;
+    const fallbackUrl = `https://storage-api.watchbilm.org/media/tmdb/search/multi?query=${encodedQuery}&include_adult=false&page=1`;
+    const requestUrls = [primaryUrl, fallbackUrl];
+
+    let payload = null;
+    for (const requestUrl of requestUrls) {
+      try {
+        const response = await fetch(requestUrl, {
+          signal,
+          headers: { accept: 'application/json' }
+        });
+        if (!response.ok) continue;
+        payload = await response.json();
+        break;
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+      }
+    }
+    if (!payload || !Array.isArray(payload?.results)) return [];
+
+    const unique = new Map();
+    payload.results.forEach((item) => {
+      const mediaType = String(item?.media_type || '').trim().toLowerCase();
+      if (mediaType !== 'movie' && mediaType !== 'tv') return;
+      const title = String(item?.title || item?.name || '').trim();
+      if (!title) return;
+      const normalizedTitle = normalizeSearchText(title);
+      const year = String(item?.release_date || item?.first_air_date || '').slice(0, 4).trim();
+      const typeLabel = mediaType === 'movie' ? 'Movie' : 'TV';
+      const key = `${normalizedTitle}:${typeLabel}`;
+      if (unique.has(key)) return;
+      unique.set(key, {
+        label: title,
+        meta: [typeLabel, year].filter(Boolean).join(' · '),
+        score: Number(item?.popularity || 0) || 0
+      });
+    });
+
+    return [...unique.values()]
+      .sort((left, right) => (Number(right.score || 0) || 0) - (Number(left.score || 0) || 0))
+      .slice(0, SEARCH_MAX_SUGGESTIONS);
+  }
+
   function saveIncognitoSearch(query) {
     const token = Math.random().toString(36).slice(2, 12);
     let map = {};
@@ -498,6 +624,8 @@ function loadToastScript() {
     };
   });
 
+  let openMobileSearchOverlay = () => {};
+
   // Mobile nav buttons
   const mobileButtons = shadow.querySelectorAll('nav.mobile-bottom-nav button[data-page]');
   mobileButtons.forEach(btn => {
@@ -507,11 +635,7 @@ function loadToastScript() {
     btn.onclick = () => {
       const target = btn.dataset.page;
       if (target === 'search') {
-        const overlay = shadow.getElementById('mobileSearchOverlay');
-        const input = shadow.getElementById('mobileSearchInput');
-        overlay.classList.add('active');
-        input.focus();
-        document.body.style.overflow = 'hidden';
+        openMobileSearchOverlay();
         return;
       }
       const route = target === 'chat'
@@ -912,10 +1036,169 @@ function loadToastScript() {
   const searchInput = shadow.querySelector('#searchInput');
   const navbarSearchForm = shadow.getElementById('navbarSearchForm');
   const desktopClearBtn = shadow.getElementById('desktopSearchClearBtn');
+  const desktopSuggestPanel = shadow.getElementById('desktopSearchSuggestPanel');
+  const desktopSuggestList = shadow.getElementById('desktopSearchSuggestList');
+  const desktopSuggestHint = shadow.getElementById('desktopSearchSuggestHint');
   if (navbarSearchForm && searchInput) {
+    let desktopSuggestDebounceTimer = null;
+    let desktopSuggestAbortController = null;
+    let desktopSuggestToken = 0;
+
+    const clearDesktopSuggestRequest = () => {
+      desktopSuggestToken += 1;
+      if (desktopSuggestDebounceTimer) {
+        window.clearTimeout(desktopSuggestDebounceTimer);
+        desktopSuggestDebounceTimer = null;
+      }
+      if (desktopSuggestAbortController) {
+        try {
+          desktopSuggestAbortController.abort();
+        } catch {
+          // Ignore abort failures.
+        }
+        desktopSuggestAbortController = null;
+      }
+    };
+
+    const hideDesktopSuggestions = () => {
+      if (desktopSuggestPanel) desktopSuggestPanel.hidden = true;
+      if (desktopSuggestList) desktopSuggestList.innerHTML = '';
+      if (desktopSuggestHint) desktopSuggestHint.innerHTML = '';
+    };
+
+    const renderDesktopHint = ({ text = '', didYouMeanQuery = '' } = {}) => {
+      if (!desktopSuggestHint) return;
+      desktopSuggestHint.innerHTML = '';
+      if (didYouMeanQuery) {
+        const prefix = document.createTextNode('Did you mean ');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = `"${didYouMeanQuery}"`;
+        button.addEventListener('click', () => {
+          submitSearch(didYouMeanQuery);
+        });
+        desktopSuggestHint.append(prefix, button, document.createTextNode('?'));
+        return;
+      }
+      desktopSuggestHint.textContent = String(text || '').trim();
+    };
+
+    const renderDesktopSuggestions = ({
+      query = '',
+      suggestions = [],
+      didYouMean = ''
+    } = {}) => {
+      if (!desktopSuggestPanel || !desktopSuggestList) return;
+      const trimmedQuery = String(query || '').trim();
+      desktopSuggestList.innerHTML = '';
+      suggestions.forEach((entry) => {
+        const label = String(entry?.label || '').trim();
+        if (!label) return;
+        const listItem = document.createElement('li');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'desktop-search-suggest-item';
+        button.setAttribute('role', 'option');
+        button.addEventListener('mousedown', (event) => {
+          event.preventDefault();
+        });
+        button.addEventListener('click', () => {
+          submitSearch(label);
+        });
+
+        const labelEl = document.createElement('span');
+        labelEl.className = 'desktop-search-suggest-label';
+        labelEl.textContent = label;
+        button.appendChild(labelEl);
+
+        const meta = String(entry?.meta || '').trim();
+        if (meta) {
+          const metaEl = document.createElement('span');
+          metaEl.className = 'desktop-search-suggest-meta';
+          metaEl.textContent = meta;
+          button.appendChild(metaEl);
+        }
+
+        listItem.appendChild(button);
+        desktopSuggestList.appendChild(listItem);
+      });
+
+      if (!trimmedQuery || trimmedQuery.length < 2) {
+        desktopSuggestPanel.hidden = true;
+        return;
+      }
+
+      desktopSuggestPanel.hidden = false;
+      if (didYouMean) {
+        renderDesktopHint({ didYouMeanQuery: didYouMean });
+      } else if (!suggestions.length) {
+        renderDesktopHint({ text: 'No suggestions yet. Press Enter to search.' });
+      } else {
+        renderDesktopHint({ text: 'Pick a suggestion or press Enter to search.' });
+      }
+    };
+
+    const refreshDesktopSuggestions = async (query = '') => {
+      const trimmedQuery = String(query || '').trim();
+      if (trimmedQuery.length < 2) {
+        hideDesktopSuggestions();
+        return;
+      }
+
+      const settings = window.bilmTheme?.getSettings?.() || {};
+      if (settings.incognito === true) {
+        if (desktopSuggestPanel) desktopSuggestPanel.hidden = false;
+        if (desktopSuggestList) desktopSuggestList.innerHTML = '';
+        renderDesktopHint({ text: 'Incognito is on. Press Enter to search privately.' });
+        return;
+      }
+
+      const requestToken = desktopSuggestToken + 1;
+      desktopSuggestToken = requestToken;
+      if (desktopSuggestAbortController) {
+        try {
+          desktopSuggestAbortController.abort();
+        } catch {
+          // Ignore abort failures.
+        }
+      }
+      desktopSuggestAbortController = new AbortController();
+      const signal = desktopSuggestAbortController.signal;
+      try {
+        const suggestions = await fetchSearchSuggestions(trimmedQuery, { signal });
+        if (requestToken !== desktopSuggestToken) return;
+        const didYouMean = resolveDidYouMeanQuery(trimmedQuery, suggestions.map((entry) => entry.label));
+        renderDesktopSuggestions({
+          query: trimmedQuery,
+          suggestions,
+          didYouMean
+        });
+      } catch (error) {
+        if (error?.name === 'AbortError') return;
+        if (requestToken !== desktopSuggestToken) return;
+        renderDesktopSuggestions({
+          query: trimmedQuery,
+          suggestions: [],
+          didYouMean: ''
+        });
+      }
+    };
+
+    const scheduleDesktopSuggestRefresh = () => {
+      if (desktopSuggestDebounceTimer) {
+        window.clearTimeout(desktopSuggestDebounceTimer);
+      }
+      desktopSuggestDebounceTimer = window.setTimeout(() => {
+        desktopSuggestDebounceTimer = null;
+        void refreshDesktopSuggestions(searchInput.value);
+      }, DESKTOP_SEARCH_SUGGEST_DEBOUNCE_MS);
+    };
+
     navbarSearchForm.setAttribute('action', withBase('/search/'));
     navbarSearchForm.addEventListener('submit', event => {
       event.preventDefault();
+      clearDesktopSuggestRequest();
+      hideDesktopSuggestions();
       submitSearch(searchInput.value);
     });
 
@@ -924,46 +1207,359 @@ function loadToastScript() {
       const hasText = searchInput.value.trim().length > 0;
       desktopClearBtn.hidden = !hasText;
       desktopClearBtn.style.display = hasText ? 'flex' : 'none';
+      if (!hasText) {
+        hideDesktopSuggestions();
+      }
     };
 
     toggleDesktopClear();
-    searchInput.addEventListener('input', toggleDesktopClear);
+    searchInput.addEventListener('input', () => {
+      toggleDesktopClear();
+      scheduleDesktopSuggestRefresh();
+    });
+    searchInput.addEventListener('focus', () => {
+      if (searchInput.value.trim().length >= 2) {
+        scheduleDesktopSuggestRefresh();
+      }
+    });
+    searchInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        hideDesktopSuggestions();
+      }
+    });
+    searchInput.addEventListener('blur', () => {
+      window.setTimeout(() => {
+        const activeElement = shadow.activeElement;
+        if (activeElement && desktopSuggestPanel?.contains(activeElement)) return;
+        hideDesktopSuggestions();
+      }, 120);
+    });
     if (desktopClearBtn) {
       desktopClearBtn.addEventListener('click', () => {
         searchInput.value = '';
         toggleDesktopClear();
+        clearDesktopSuggestRequest();
+        hideDesktopSuggestions();
         searchInput.focus();
       });
     }
   }
 
-  // Mobile search overlay handlers (no changes here)
+  // Mobile search overlay handlers
   const overlay = shadow.getElementById('mobileSearchOverlay');
   if (overlay) {
     const input = shadow.getElementById('mobileSearchInput');
     const clearBtn = shadow.getElementById('mobileSearchCloseBtn');
     const topCloseBtn = shadow.getElementById('mobileSearchTopCloseBtn');
+    const historySection = shadow.getElementById('mobileSearchHistorySection');
+    const historyList = shadow.getElementById('mobileSearchHistoryList');
+    const suggestSection = shadow.getElementById('mobileSearchSuggestSection');
+    const suggestList = shadow.getElementById('mobileSearchSuggestList');
+    const suggestTitle = shadow.getElementById('mobileSearchSuggestTitle');
+    const hintText = shadow.getElementById('mobileSearchHint');
+    let mobileSuggestDebounceTimer = null;
+    let mobileSuggestAbortController = null;
+    let mobileSuggestToken = 0;
+
+    const clearMobileSuggestRequest = () => {
+      mobileSuggestToken += 1;
+      if (mobileSuggestDebounceTimer) {
+        window.clearTimeout(mobileSuggestDebounceTimer);
+        mobileSuggestDebounceTimer = null;
+      }
+      if (mobileSuggestAbortController) {
+        try {
+          mobileSuggestAbortController.abort();
+        } catch {
+          // Ignore abort failures.
+        }
+        mobileSuggestAbortController = null;
+      }
+    };
+
+    const setMobileSearchHint = (text, { didYouMeanQuery = '' } = {}) => {
+      if (!hintText) return;
+      hintText.innerHTML = '';
+      hintText.classList.toggle('mobile-search-did-you-mean', Boolean(didYouMeanQuery));
+      if (didYouMeanQuery) {
+        const prefix = document.createTextNode('Did you mean ');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = `"${didYouMeanQuery}"`;
+        button.addEventListener('click', () => {
+          submitSearch(didYouMeanQuery, { closeMobileOverlay: true });
+        });
+        hintText.append(prefix, button, document.createTextNode('?'));
+        return;
+      }
+      hintText.textContent = String(text || '').trim();
+    };
+
+    const createMobileSearchRow = ({
+      label = '',
+      meta = '',
+      removable = false,
+      onSelect = null,
+      onRemove = null
+    } = {}) => {
+      const item = document.createElement('li');
+      item.className = 'mobile-search-item';
+
+      const mainButton = document.createElement('button');
+      mainButton.type = 'button';
+      mainButton.className = 'mobile-search-item-main';
+      const labelSpan = document.createElement('span');
+      labelSpan.className = 'mobile-search-item-label';
+      labelSpan.textContent = String(label || '').trim();
+      mainButton.appendChild(labelSpan);
+      if (meta) {
+        const metaSpan = document.createElement('span');
+        metaSpan.className = 'mobile-search-item-meta';
+        metaSpan.textContent = String(meta || '').trim();
+        mainButton.appendChild(metaSpan);
+      }
+      mainButton.addEventListener('click', () => {
+        if (typeof onSelect === 'function') onSelect();
+      });
+      item.appendChild(mainButton);
+
+      if (removable) {
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'mobile-search-item-remove';
+        removeBtn.setAttribute('aria-label', `Remove ${String(label || '').trim()} from search history`);
+        removeBtn.textContent = '×';
+        removeBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (typeof onRemove === 'function') onRemove();
+        });
+        item.appendChild(removeBtn);
+      }
+      return item;
+    };
+
+    const renderMobileSearchHistory = (query = '') => {
+      if (!historySection || !historyList || !suggestSection || !suggestList) return;
+      const normalizedQuery = normalizeSearchText(query);
+      const historyLimit = getMobileHistoryLimit();
+      const entries = getSearchHistoryEntries({ limit: 120 })
+        .filter((entry) => {
+          if (!normalizedQuery) return true;
+          return normalizeSearchText(entry.query).includes(normalizedQuery);
+        })
+        .slice(0, historyLimit);
+
+      historyList.innerHTML = '';
+      entries.forEach((entry) => {
+        const row = createMobileSearchRow({
+          label: entry.query,
+          meta: 'Recent',
+          removable: true,
+          onSelect: () => submitSearch(entry.query, { closeMobileOverlay: true }),
+          onRemove: () => {
+            removeSearchHistoryEntry(entry.query);
+            renderMobileSearchHistory(input?.value || '');
+          }
+        });
+        historyList.appendChild(row);
+      });
+
+      historySection.hidden = false;
+      suggestSection.hidden = true;
+      suggestList.innerHTML = '';
+
+      if (entries.length === 0) {
+        setMobileSearchHint(
+          normalizedQuery
+            ? 'No recent searches match that text.'
+            : 'No recent searches yet.'
+        );
+      } else {
+        setMobileSearchHint('Tap a recent search or type to see suggestions.');
+      }
+    };
+
+    const renderMobileSearchSuggestions = ({
+      query = '',
+      historyMatches = [],
+      remoteSuggestions = [],
+      didYouMean = ''
+    } = {}) => {
+      if (!historySection || !historyList || !suggestSection || !suggestList || !suggestTitle) return;
+      const combined = [];
+      const seen = new Set();
+
+      historyMatches.forEach((entry) => {
+        const label = String(entry?.query || '').trim();
+        if (!label) return;
+        const key = normalizeSearchText(label);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        combined.push({
+          label,
+          meta: 'Recent',
+          removable: true
+        });
+      });
+
+      remoteSuggestions.forEach((entry) => {
+        const label = String(entry?.label || '').trim();
+        if (!label) return;
+        const key = normalizeSearchText(label);
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        combined.push({
+          label,
+          meta: String(entry?.meta || '').trim(),
+          removable: false
+        });
+      });
+
+      suggestList.innerHTML = '';
+      combined.forEach((entry) => {
+        const row = createMobileSearchRow({
+          label: entry.label,
+          meta: entry.meta,
+          removable: entry.removable,
+          onSelect: () => submitSearch(entry.label, { closeMobileOverlay: true }),
+          onRemove: entry.removable
+            ? () => {
+              removeSearchHistoryEntry(entry.label);
+              renderMobileSearchHistory(query);
+            }
+            : null
+        });
+        suggestList.appendChild(row);
+      });
+
+      historySection.hidden = true;
+      suggestSection.hidden = false;
+      suggestTitle.textContent = combined.length > 0 ? 'Suggestions' : 'No Suggestions';
+
+      if (didYouMean) {
+        setMobileSearchHint('', { didYouMeanQuery: didYouMean });
+      } else if (combined.length === 0) {
+        setMobileSearchHint('No suggestions yet. Press Enter to search.');
+      } else {
+        setMobileSearchHint('Tap a suggestion or press Enter to search.');
+      }
+    };
+
+    const refreshMobileSearchFromInput = async (query = '') => {
+      const trimmedQuery = String(query || '').trim();
+      if (!trimmedQuery) {
+        renderMobileSearchHistory('');
+        return;
+      }
+
+      const settings = window.bilmTheme?.getSettings?.() || {};
+      if (settings.incognito === true) {
+        historySection.hidden = true;
+        suggestSection.hidden = true;
+        if (historyList) historyList.innerHTML = '';
+        if (suggestList) suggestList.innerHTML = '';
+        setMobileSearchHint('Incognito is on. Press Enter to search privately.');
+        return;
+      }
+
+      const requestToken = mobileSuggestToken + 1;
+      mobileSuggestToken = requestToken;
+      if (mobileSuggestAbortController) {
+        try {
+          mobileSuggestAbortController.abort();
+        } catch {
+          // Ignore abort failures.
+        }
+      }
+      mobileSuggestAbortController = new AbortController();
+      const signal = mobileSuggestAbortController.signal;
+      const normalizedQuery = normalizeSearchText(trimmedQuery);
+      const historyMatches = getSearchHistoryEntries({ limit: 120 })
+        .filter((entry) => normalizeSearchText(entry.query).includes(normalizedQuery))
+        .slice(0, 3);
+
+      try {
+        const remoteSuggestions = await fetchSearchSuggestions(trimmedQuery, { signal });
+        if (requestToken !== mobileSuggestToken) return;
+        const didYouMean = resolveDidYouMeanQuery(trimmedQuery, [
+          ...historyMatches.map((entry) => entry.query),
+          ...remoteSuggestions.map((entry) => entry.label)
+        ]);
+        renderMobileSearchSuggestions({
+          query: trimmedQuery,
+          historyMatches,
+          remoteSuggestions,
+          didYouMean
+        });
+      } catch (error) {
+        if (error?.name === 'AbortError') return;
+        if (requestToken !== mobileSuggestToken) return;
+        renderMobileSearchSuggestions({
+          query: trimmedQuery,
+          historyMatches,
+          remoteSuggestions: [],
+          didYouMean: resolveDidYouMeanQuery(trimmedQuery, historyMatches.map((entry) => entry.query))
+        });
+      }
+    };
+
+    const scheduleMobileSearchRefresh = () => {
+      if (!input) return;
+      if (mobileSuggestDebounceTimer) {
+        window.clearTimeout(mobileSuggestDebounceTimer);
+      }
+      mobileSuggestDebounceTimer = window.setTimeout(() => {
+        mobileSuggestDebounceTimer = null;
+        void refreshMobileSearchFromInput(input.value);
+      }, SEARCH_SUGGEST_DEBOUNCE_MS);
+    };
 
     const closeOverlay = () => {
+      clearMobileSuggestRequest();
       overlay.classList.remove('active');
-      input.value = '';
-      clearBtn.style.display = 'none';
+      if (input) input.value = '';
+      if (clearBtn) clearBtn.style.display = 'none';
+      if (historyList) historyList.innerHTML = '';
+      if (suggestList) suggestList.innerHTML = '';
+      if (historySection) historySection.hidden = false;
+      if (suggestSection) suggestSection.hidden = true;
+      setMobileSearchHint('Type to search.');
       document.body.style.overflow = '';
     };
 
-    input.addEventListener('input', () => {
-      clearBtn.style.display = input.value.length > 0 ? 'block' : 'none';
+    openMobileSearchOverlay = () => {
+      overlay.classList.add('active');
+      document.body.style.overflow = 'hidden';
+      if (input) {
+        input.focus();
+        input.select();
+      }
+      if (clearBtn) {
+        clearBtn.style.display = input && input.value.length > 0 ? 'block' : 'none';
+      }
+      void refreshMobileSearchFromInput(input?.value || '');
+    };
+
+    input?.addEventListener('input', () => {
+      if (clearBtn) clearBtn.style.display = input.value.length > 0 ? 'block' : 'none';
+      scheduleMobileSearchRefresh();
     });
 
-    clearBtn.addEventListener('click', () => {
+    clearBtn?.addEventListener('click', () => {
+      if (!input) return;
       input.value = '';
       clearBtn.style.display = 'none';
+      renderMobileSearchHistory('');
       input.focus();
     });
 
-    topCloseBtn.addEventListener('click', closeOverlay);
+    topCloseBtn?.addEventListener('click', closeOverlay);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) closeOverlay();
+    });
 
-    input.addEventListener('keydown', e => {
+    input?.addEventListener('keydown', e => {
       if (e.key === 'Enter') {
         const query = input.value.trim();
         if (query) {

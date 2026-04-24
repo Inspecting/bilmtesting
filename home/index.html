@@ -48,6 +48,10 @@
       <p class="search-subtitle">Search movies and series fast, then jump back into what you were already watching.</p>
       <form id="homeSearchForm" action="../search/" method="get">
               <input id="searchInput" name="q" type="search" placeholder="Search movies or TV shows..." autocomplete="off" />
+        <div id="homeSearchSuggestPanel" class="home-search-suggest" hidden>
+          <ul id="homeSearchSuggestList" class="home-search-suggest-list" role="listbox" aria-label="Search suggestions"></ul>
+          <p id="homeSearchSuggestHint" class="home-search-suggest-hint"></p>
+        </div>
         <div class="button-row">
           <button class="search-btn" id="searchBtn" type="submit">Start Search</button>
         </div>

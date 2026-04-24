@@ -24,7 +24,7 @@ main {
   width: 100%;
   min-width: 0;
   min-height: 100vh;
-  padding: 18px clamp(12px, 2vw, 26px) 86px;
+  padding: 22px clamp(12px, 2vw, 26px) 86px;
   box-sizing: border-box;
 }
 
@@ -252,11 +252,12 @@ main {
   overflow-x: scroll;
   overflow-y: hidden;
   min-height: 44px;
+  margin-top: 4px;
   margin-bottom: 0;
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  padding: 2px 0 8px;
+  padding: 6px 0 8px;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
   touch-action: pan-x;
@@ -568,7 +569,7 @@ body.filters-open {
 
 @media (max-width: 900px) {
   main {
-    padding: 12px 10px 88px;
+    padding: 14px 10px 88px;
   }
 
   .section {

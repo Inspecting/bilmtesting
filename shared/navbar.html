@@ -35,6 +35,10 @@
           </svg>
         </button>
         <button type="button" id="desktopSearchClearBtn" class="search-clear" aria-label="Clear search input" hidden>×</button>
+        <div id="desktopSearchSuggestPanel" class="desktop-search-suggest" hidden>
+          <ul id="desktopSearchSuggestList" class="desktop-search-suggest-list" role="listbox" aria-label="Search suggestions"></ul>
+          <p id="desktopSearchSuggestHint" class="desktop-search-suggest-hint"></p>
+        </div>
       </form>
       <div class="account-menu-wrap" id="navbarAccountMenuWrap">
         <button type="button" id="navbarAccountBtn" class="account-btn" aria-label="Account" aria-haspopup="menu" aria-expanded="false">Account</button>
@@ -103,6 +107,24 @@
 
     <!-- Clear Search Input Button -->
     <button id="mobileSearchCloseBtn" aria-label="Clear search input">×</button>
+  </div>
+
+  <div id="mobileSearchResults" class="mobile-search-results" aria-live="polite">
+    <section id="mobileSearchHistorySection" class="mobile-search-section">
+      <div class="mobile-search-section-head">
+        <h3>Recent Searches</h3>
+      </div>
+      <ul id="mobileSearchHistoryList" class="mobile-search-list" role="list"></ul>
+    </section>
+
+    <section id="mobileSearchSuggestSection" class="mobile-search-section" hidden>
+      <div class="mobile-search-section-head">
+        <h3 id="mobileSearchSuggestTitle">Suggestions</h3>
+      </div>
+      <ul id="mobileSearchSuggestList" class="mobile-search-list" role="list"></ul>
+    </section>
+
+    <p id="mobileSearchHint" class="mobile-search-hint">Type to search.</p>
   </div>
 </div>
 

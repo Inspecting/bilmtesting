@@ -215,6 +215,17 @@ function getAdaptiveInitialCount(rowEl, fallbackCardWidth = 140) {
   return Math.max(ROW_MIN_INITIAL_COUNT, visibleCount + 1);
 }
 
+function getRowPreloadDistance(rowEl, fallbackCardWidth = 140) {
+  if (!rowEl) return 120;
+  const computed = window.getComputedStyle(rowEl);
+  const gap = Number.parseFloat(computed.columnGap || computed.gap || '12') || 12;
+  const sampleCard = rowEl.querySelector('.movie-card');
+  const cardWidth = Number(sampleCard?.getBoundingClientRect?.().width || 0)
+    || Number.parseFloat(sampleCard ? window.getComputedStyle(sampleCard).width : '')
+    || fallbackCardWidth;
+  return Math.max(96, Math.round(cardWidth + gap));
+}
+
 function getOrCreateSectionState(stateMap, sectionSlug) {
   const key = String(sectionSlug || '').trim();
   if (!key) {
@@ -1118,7 +1129,8 @@ function setupInfiniteScroll(section, loaderFn, rowPrefix = '') {
   let loading = false;
   rowEl.addEventListener('scroll', async () => {
     if (loading) return;
-    if (rowEl.scrollLeft + rowEl.clientWidth >= rowEl.scrollWidth - 300) {
+    const preloadDistance = getRowPreloadDistance(rowEl);
+    if (rowEl.scrollLeft + rowEl.clientWidth >= rowEl.scrollWidth - preloadDistance) {
       loading = true;
       await loaderFn(section, { targetCount: ROW_APPEND_COUNT, reason: 'scroll-append' });
       loading = false;

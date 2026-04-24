@@ -4914,7 +4914,7 @@
     },
     async setUsername(username) {
       await init();
-      await requireAuth();
+      const user = await requireAuth();
       const cleaned = String(username || '').trim();
       if (cleaned.length > 30) throw new Error('Username must be 30 characters or fewer.');
 
