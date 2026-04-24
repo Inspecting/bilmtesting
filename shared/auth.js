@@ -11,7 +11,7 @@
   };
 
 
-  const DATA_API_BASE = '/api/data';
+  const DATA_API_PROXY_BASE = '/api/data';
   const DATA_API_DIRECT_BASE = 'https://data-api.watchbilm.org';
   const CHAT_API_BASE = 'https://chat-api.watchbilm.org';
   const LIST_SYNC_PUSH_PATH = '/sync/lists/push';
@@ -51,10 +51,21 @@
     return error instanceof TypeError || message.includes('failed to fetch') || message.includes('networkerror');
   }
 
+  function resolveTransferApiBase() {
+    const hostname = String(window?.location?.hostname || '').trim().toLowerCase();
+    const isProductionHost = (
+      hostname === 'watchbilm.org'
+      || hostname === 'www.watchbilm.org'
+      || hostname.endsWith('.watchbilm.org')
+    );
+    return isProductionHost ? DATA_API_DIRECT_BASE : DATA_API_PROXY_BASE;
+  }
+
   function buildTransferApiUrl(path = '/') {
     const normalizedPath = String(path || '/').trim() || '/';
     const safePath = normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`;
-    const proxiedPath = `${DATA_API_BASE}${safePath}`;
+    const apiBase = resolveTransferApiBase();
+    const proxiedPath = `${apiBase}${safePath}`;
     const origin = String(window?.location?.origin || '').trim();
     if (/^https?:\/\//i.test(origin)) {
       try {
@@ -615,16 +626,16 @@
   let snapshotRecoveryCheckedThisSession = false;
   let sectorBootstrapCheckedThisSession = false;
 
-  const MIN_SAVE_INTERVAL_MS = 15000;
-  const AUTOSYNC_HEARTBEAT_MS = 15000;
+  const MIN_SAVE_INTERVAL_MS = 4000;
+  const AUTOSYNC_HEARTBEAT_MS = 5000;
   const FIREBASE_MIRROR_INTERVAL_MS = 24 * 60 * 60 * 1000;
   const FIREBASE_MANUAL_BACKUP_COOLDOWN_MS = 60 * 60 * 1000;
   const FIREBASE_AUTO_BACKUP_REASON = 'auto-midnight';
-  const LIST_SYNC_DEBOUNCE_MS = 500;
-  const LIST_DELETE_SYNC_DEBOUNCE_MS = 15000;
-  const SYNC_IDLE_PAUSE_MS = 5 * 60 * 1000;
-  const SYNC_HIDDEN_PAUSE_MS = 60 * 1000;
-  const SYNC_PAUSE_RECHECK_MS = 30000;
+  const LIST_SYNC_DEBOUNCE_MS = 250;
+  const LIST_DELETE_SYNC_DEBOUNCE_MS = 3000;
+  const SYNC_IDLE_PAUSE_MS = 30 * 60 * 1000;
+  const SYNC_HIDDEN_PAUSE_MS = 10 * 60 * 1000;
+  const SYNC_PAUSE_RECHECK_MS = 10000;
   const CLOUD_DRIFT_REPAIR_COOLDOWN_MS = 10 * 60 * 1000;
   const LIST_SYNC_CURSOR_META_KEY = 'lastListSyncCursorMs';
   const LIST_SYNC_MIGRATED_META_KEY = 'sectorMigrationCompletedAtMs';
