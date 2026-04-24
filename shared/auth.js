@@ -651,7 +651,10 @@
   const LINKED_SHARE_CURSOR_ITEM_META_KEY = 'linkedShareCursorItemKey';
   const LINKED_SHARE_LAST_PULL_META_KEY = 'lastLinkedSharePullAtMs';
   const LINKED_SHARE_LINK_SIGNATURE_META_KEY = 'linkedShareLinkSignature';
+  const LINKED_SHARE_SOURCE_PUSH_SIGNATURE_META_KEY = 'linkedShareSourcePushSignature';
+  const LINKED_SHARE_SOURCE_PUSH_ATTEMPT_META_KEY = 'linkedShareSourcePushAttemptAtMs';
   const LINKED_SHARE_CACHE_KEY = 'bilm-linked-share-cache-v1';
+  const LINKED_SHARE_SOURCE_PUSH_RETRY_MS = 60 * 1000;
   const IMPORT_SAFETY_SNAPSHOT_KEY = 'bilm-import-safety-snapshot-v1';
   const IMPORT_SAFETY_SNAPSHOT_MAX_CHARS = 600000;
   const SYNC_FUTURE_TIME_WINDOW_MS = 10 * 60 * 1000;
@@ -1720,6 +1723,81 @@
     setScopedSyncMetaValue(LINKED_SHARE_CURSOR_SECTOR_META_KEY, '', user);
     setScopedSyncMetaValue(LINKED_SHARE_CURSOR_ITEM_META_KEY, '', user);
     return 0;
+  }
+
+  function getLinkedShareSourcePushSignature(user = auth?.currentUser || currentUser) {
+    return String(getScopedSyncMetaValue(LINKED_SHARE_SOURCE_PUSH_SIGNATURE_META_KEY, '', user) || '').trim();
+  }
+
+  function setLinkedShareSourcePushSignature(signature = '', user = auth?.currentUser || currentUser) {
+    return setScopedSyncMetaValue(
+      LINKED_SHARE_SOURCE_PUSH_SIGNATURE_META_KEY,
+      String(signature || '').trim(),
+      user
+    );
+  }
+
+  function getLinkedShareSourcePushAttemptAtMs(user = auth?.currentUser || currentUser) {
+    return getScopedSyncMetaNumber(LINKED_SHARE_SOURCE_PUSH_ATTEMPT_META_KEY, 0, user);
+  }
+
+  function setLinkedShareSourcePushAttemptAtMs(nextValue = 0, user = auth?.currentUser || currentUser) {
+    return setScopedSyncMetaNumber(
+      LINKED_SHARE_SOURCE_PUSH_ATTEMPT_META_KEY,
+      Math.max(0, Number(nextValue || 0) || 0),
+      user
+    );
+  }
+
+  function resetLinkedShareSourcePushState(user = auth?.currentUser || currentUser) {
+    setLinkedShareSourcePushSignature('', user);
+    setLinkedShareSourcePushAttemptAtMs(0, user);
+  }
+
+  function shouldRunLinkedShareSourcePush(linkSignature = '', user = auth?.currentUser || currentUser) {
+    const normalizedSignature = String(linkSignature || '').trim();
+    if (!normalizedSignature) return false;
+    if (getLinkedShareSourcePushSignature(user) === normalizedSignature) return false;
+    const lastAttemptAtMs = getLinkedShareSourcePushAttemptAtMs(user);
+    if (lastAttemptAtMs > 0 && (Date.now() - lastAttemptAtMs) < LINKED_SHARE_SOURCE_PUSH_RETRY_MS) {
+      return false;
+    }
+    return true;
+  }
+
+  async function pushLinkedShareSourceSnapshotNow(user, userId, linkSignature = '') {
+    const nowMs = Date.now();
+    setLinkedShareSourcePushAttemptAtMs(nowMs, user);
+    const snapshot = normalizeSnapshotForCloudSave(collectBackupData());
+    const operations = sectorBootstrapOperationsFromSnapshot(snapshot, nowMs);
+    if (operations.length > 0) {
+      const response = await pushListOperationsToTransferApi(user, userId, operations);
+      const maxUpdatedAtMs = operations.reduce((max, operation) => Math.max(
+        max,
+        normalizeOperationUpdatedAt(operation?.updatedAtMs, 0, { context: 'linked-share-source-push' })
+      ), 0);
+      const nextCursorMs = Math.max(
+        normalizeOperationUpdatedAt(response?.cursorMs, 0, { context: 'linked-share-source-cursor' }),
+        maxUpdatedAtMs
+      );
+      if (nextCursorMs > 0) {
+        setListSyncCursorMs(nextCursorMs);
+      }
+    }
+
+    try {
+      await saveSnapshotToTransferApi(user, userId, snapshot);
+    } catch (error) {
+      console.warn('Linked-share source snapshot save failed:', error);
+    }
+
+    writeSyncMeta({
+      lastCloudPushAt: nowMs,
+      lastListSyncPushAt: nowMs,
+      lastListSyncPushReason: 'linked-share-source-bootstrap'
+    });
+    setLinkedShareSourcePushSignature(linkSignature, user);
+    return true;
   }
 
   function getSectorMigrationCompletedAtMs() {
@@ -3460,6 +3538,23 @@
         : [];
       const responseLinkSignature = String(response?.linkSignature || '').trim();
       const nextLinkSignature = responseLinkSignature || activeLinkIds.join('|');
+      if (activeLinkIds.length === 0) {
+        resetLinkedShareSourcePushState(user);
+      } else if (shouldRunLinkedShareSourcePush(nextLinkSignature, user)) {
+        try {
+          await pushLinkedShareSourceSnapshotNow(user, userId, nextLinkSignature);
+        } catch (error) {
+          console.warn('Linked-share source bootstrap push failed:', error);
+          emitSyncIssue({
+            scope: 'linked-share',
+            code: error?.code || error?.error || 'linked_share_source_push_failed',
+            message: error?.message || 'Linked share source push failed.',
+            status: error?.status || null,
+            retryable: error?.retryable !== false,
+            requestId: error?.requestId || null
+          });
+        }
+      }
       if (nextLinkSignature !== linkSignature) {
         setLinkedShareLinkSignature(nextLinkSignature, user);
         linkSignature = nextLinkSignature;
@@ -5382,6 +5477,7 @@
       if (normalizedAction === 'approve') {
         resetLinkedShareCursor(user);
         setLinkedShareLinkSignature('', user);
+        resetLinkedShareSourcePushState(user);
         void syncListsFromCloudNow().catch((error) => {
           console.warn('Post-link approval sync failed:', error);
         });
@@ -5422,6 +5518,7 @@
       const retainedSharedData = materializeLinkedShareCacheToLocalLists();
       resetLinkedShareCursor(user);
       setLinkedShareLinkSignature('', user);
+      resetLinkedShareSourcePushState(user);
       clearLinkedShareCache();
       if (retainedSharedData.applied) {
         try {
