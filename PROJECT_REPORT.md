@@ -36,6 +36,7 @@ Bilm (`watchbilm.org`) is a movie/TV discovery and playback web app with:
 - `C:\Users\reidm\chat-api` is not a standalone git repo in this workspace; it is currently under the user-home git root.
 - Firebase client config values are public client config (not secrets).
 - I could not verify Cloudflare/Firebase/Supabase dashboard-side ACL/policies directly from code.
+- Viewer policy note: do not apply `sandbox` to movie/TV player iframes in this project; several providers fail to initialize when sandboxed.
 
 ---
 
@@ -63,9 +64,9 @@ Bilm (`watchbilm.org`) is a movie/TV discovery and playback web app with:
   - Type: frontend utility
   - Risky logic: reads ops token from runtime/meta/storage
 - `shared/embed-sandbox.js`
-  - Purpose: iframe security attribute manager
+  - Purpose: iframe attribute helper for viewer compatibility
   - Type: frontend security utility
-  - Risky logic: iframe sandboxing (hardened in this pass)
+  - Risky logic: controls iframe permissions and explicitly removes sandbox for provider compatibility
 - `shared/iframe-loader.js`
   - Purpose: resilient iframe loading/retry logic
   - Type: frontend runtime utility
@@ -359,11 +360,11 @@ Auth and safety:
 4. Files:
 - `C:\Users\reidm\bilm\shared\embed-sandbox.js`
 - `C:\Users\reidm\bilm\shared\iframe-loader.js`
-- Problem: iframe helper removed sandbox attributes.
-- Danger: elevated embed/XSS risk from third-party player content.
+- Problem: sandboxed player iframes were blocking provider playback across viewer pages.
+- Danger: users could not reliably load streams.
 - Severity: **high**
-- Change: enforce sandbox token allowlist, safer iframe permissions, URL normalization guard.
-- Verify: player iframes load with sandbox attribute present and allowed token set.
+- Change: enforce no-sandbox iframe policy in viewer helper/loader and keep strict URL + permission attributes.
+- Verify: player iframes load with sandbox removed and playback initializes across providers.
 
 5. Files:
 - `C:\Users\reidm\data-api\src\index.js`
@@ -414,9 +415,9 @@ Auth and safety:
 2. Files:
 - `C:\Users\reidm\bilm\shared\embed-sandbox.js`
 - `C:\Users\reidm\bilm\shared\iframe-loader.js`
-- Problem: fallback paths could strip iframe sandbox.
-- Cause: explicit `removeAttribute('sandbox')`.
-- Fix: normalized sandbox application in both primary and fallback code.
+- Problem: sandbox application blocked real player startup in fallback/refresh flows.
+- Cause: provider embeds require unsandboxed iframe execution paths.
+- Fix: centralized no-sandbox behavior in both primary and fallback iframe set paths.
 - Test: Playwright watch tests (server fallback/fullscreen/player menu tests) passed.
 
 3. Files:
@@ -435,7 +436,7 @@ Auth and safety:
 - Static serving now has explicit boundary controls; future backend/config files are protected by default unless intentionally allowlisted.
 - Auth bypass behavior is now explicit and opt-in with a secret token, preventing silent insecure deploys.
 - User ID validation is stricter to reduce malformed input persistence and edge-case collisions.
-- Iframe security behavior is centralized and consistent between helper and fallback paths.
+- Iframe behavior is centralized and consistent between helper and fallback paths, with explicit no-sandbox policy.
 - Wrangler variable contracts are now aligned across services for safer deployments.
 
 Safe extension guidance:

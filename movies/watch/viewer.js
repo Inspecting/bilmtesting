@@ -416,13 +416,9 @@ function setPlayerTrustNote(server = currentServer) {
 function setEmbedIframeSrc(rawUrl = '') {
   const url = String(rawUrl || '').trim() || 'about:blank';
   if (!iframe) return;
-  if (window.BilmEmbedSandbox?.setSandboxedIframeSrc) {
-    window.BilmEmbedSandbox.setSandboxedIframeSrc(iframe, url);
-    return;
-  }
   iframe.removeAttribute('sandbox');
   iframe.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
-  iframe.setAttribute('allow', 'fullscreen; encrypted-media; autoplay');
+  iframe.setAttribute('allow', 'fullscreen; encrypted-media; autoplay; picture-in-picture');
   iframe.setAttribute('allowfullscreen', '');
   iframe.src = url;
 }
@@ -499,7 +495,7 @@ async function loadMovieEmbedUrlWithRetry({ requestId, url, server, allowFallbac
         attempt,
         timeoutMs
       });
-      setPlayerStatus(`Loading ${serverLabel} (attempt ${attempt}/${timeoutScheduleMs.length})…`);
+      setPlayerStatus('Loading player…');
     },
     onSuccess: ({ attempt }) => {
       markServerHealth(server, true, 'success');
@@ -657,7 +653,7 @@ function refreshCurrentServer() {
     return;
   }
   markServerHealth(currentServer, true, 'manual-refresh');
-  setPlayerStatus(`Refreshing ${getServerLabel(currentServer)}…`);
+  setPlayerStatus('Loading player…');
   closeAllDropdowns();
   updateIframe();
 }
@@ -1499,6 +1495,20 @@ async function exitNativeFullscreen() {
   return false;
 }
 
+function isAnyFullscreenActive() {
+  return isNativeFullscreenLikelyActive()
+    || document.body.classList.contains('simulated-fullscreen-active')
+    || playerWithControls?.classList.contains('simulated-fullscreen');
+}
+
+async function exitAnyFullscreen() {
+  if (isNativeFullscreenLikelyActive()) {
+    await exitNativeFullscreen();
+  }
+  exitSimulatedFullscreen();
+  handleFullscreenStateChange();
+}
+
 function handleFullscreenStateChange() {
   const nativeFullscreenActive = isNativeFullscreenLikelyActive();
   document.body.classList.toggle('native-fullscreen-active', nativeFullscreenActive);
@@ -1513,6 +1523,10 @@ function handleFullscreenStateChange() {
 }
 
 fullscreenBtn.onclick = async () => {
+  if (isAnyFullscreenActive()) {
+    await exitAnyFullscreen();
+    return;
+  }
   tryEmbedMasterFullscreenCommand();
   const fullscreenStarted = await tryStartNativeFullscreen();
   if (!fullscreenStarted) {
@@ -1525,16 +1539,17 @@ fullscreenBtn.onclick = async () => {
 
 if (closeBtn) {
   closeBtn.onclick = async () => {
-    if (isNativeFullscreenLikelyActive()) {
-      await exitNativeFullscreen();
-    }
-    exitSimulatedFullscreen();
-    handleFullscreenStateChange();
+    await exitAnyFullscreen();
   };
 }
 
 document.addEventListener('fullscreenchange', handleFullscreenStateChange);
 document.addEventListener('webkitfullscreenchange', handleFullscreenStateChange);
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Escape') return;
+  if (!isAnyFullscreenActive()) return;
+  void exitAnyFullscreen();
+});
 window.addEventListener('resize', handleFullscreenStateChange, { passive: true });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') {
