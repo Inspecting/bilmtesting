@@ -54,6 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const searchInput = document.getElementById('searchInput');
   const searchBtn = document.getElementById('searchBtn');
   const homeSearchForm = document.getElementById('homeSearchForm');
+  const mainElement = document.querySelector('main');
   const homeSearchSuggestPanel = document.getElementById('homeSearchSuggestPanel');
   const homeSearchSuggestList = document.getElementById('homeSearchSuggestList');
   const homeSearchSuggestHint = document.getElementById('homeSearchSuggestHint');
@@ -116,6 +117,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let homeSuggestDebounceTimer = null;
   let homeSuggestAbortController = null;
   let homeSuggestToken = 0;
+  let homeSuggestPositionRafId = null;
 
   function normalizeSearchText(value = '') {
     return String(value || '').trim().toLowerCase();
@@ -184,6 +186,35 @@ document.addEventListener('DOMContentLoaded', () => {
     if (homeSearchSuggestPanel) homeSearchSuggestPanel.hidden = true;
     if (homeSearchSuggestList) homeSearchSuggestList.innerHTML = '';
     if (homeSearchSuggestHint) homeSearchSuggestHint.innerHTML = '';
+  }
+
+  function positionHomeSearchSuggestions() {
+    if (!homeSearchSuggestPanel || homeSearchSuggestPanel.hidden || !searchInput) return;
+    const rect = searchInput.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const viewportPadding = 12;
+    const width = Math.max(220, Math.min(rect.width, window.innerWidth - (viewportPadding * 2)));
+    const left = Math.max(
+      viewportPadding,
+      Math.min(rect.left, window.innerWidth - viewportPadding - width)
+    );
+    const top = Math.max(viewportPadding, Math.round(rect.bottom - 8));
+    const availableHeight = Math.max(140, window.innerHeight - top - viewportPadding);
+
+    homeSearchSuggestPanel.style.left = `${Math.round(left)}px`;
+    homeSearchSuggestPanel.style.top = `${top}px`;
+    homeSearchSuggestPanel.style.width = `${Math.round(width)}px`;
+    if (homeSearchSuggestList) {
+      homeSearchSuggestList.style.maxHeight = `${Math.max(110, Math.round(availableHeight - 44))}px`;
+    }
+  }
+
+  function queueHomeSearchSuggestionPosition() {
+    if (homeSuggestPositionRafId) return;
+    homeSuggestPositionRafId = window.requestAnimationFrame(() => {
+      homeSuggestPositionRafId = null;
+      positionHomeSearchSuggestions();
+    });
   }
 
   async function fetchHomeSearchSuggestions(query, { signal } = {}) {
@@ -291,6 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     homeSearchSuggestPanel.hidden = false;
+    queueHomeSearchSuggestionPosition();
     if (didYouMean) {
       setHomeSearchHint({ didYouMeanQuery: didYouMean });
     } else if (suggestions.length > 0) {
@@ -313,6 +345,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (homeSearchSuggestPanel) homeSearchSuggestPanel.hidden = false;
       if (homeSearchSuggestList) homeSearchSuggestList.innerHTML = '';
       setHomeSearchHint({ text: 'Incognito is on. Press Enter to search privately.' });
+      queueHomeSearchSuggestionPosition();
       return;
     }
 
@@ -419,6 +452,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (homeSearchForm?.contains(event.target)) return;
     hideHomeSearchSuggestions();
   });
+  window.addEventListener('resize', queueHomeSearchSuggestionPosition, { passive: true });
+  window.addEventListener('scroll', queueHomeSearchSuggestionPosition, { passive: true });
+  mainElement?.addEventListener('scroll', queueHomeSearchSuggestionPosition, { passive: true });
 
   function loadList(key) {
     const list = storage.getJSON(key, []);

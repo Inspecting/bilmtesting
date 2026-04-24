@@ -148,15 +148,22 @@
       }
     }
 
+    function getAccentColor() {
+      const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+      return accent || '#c084fc';
+    }
+
     function renderFrame(shouldMove = true) {
+      const accentColor = getAccentColor();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.shadowColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#c084fc';
+      ctx.shadowColor = accentColor;
       ctx.shadowBlur = 8;
+      ctx.fillStyle = accentColor;
+      ctx.globalAlpha = 0.9;
 
       for (let dot of dots) {
         ctx.beginPath();
         ctx.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(193, 132, 252, 0.9)';
         ctx.fill();
 
         if (shouldMove) {
@@ -168,6 +175,7 @@
         }
       }
 
+      ctx.globalAlpha = 1;
       ctx.shadowBlur = 0;
     }
 
