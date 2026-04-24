@@ -52,9 +52,27 @@
     }
     h1 {
       color: var(--text-primary);
-      margin-bottom: 20px;
+      margin-bottom: 8px;
       text-align: center;
       font-weight: 700;
+    }
+    .did-you-mean {
+      text-align: center;
+      margin: 0 0 16px;
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+    .did-you-mean[hidden] {
+      display: none !important;
+    }
+    .did-you-mean a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+    .did-you-mean a:hover {
+      color: color-mix(in srgb, var(--accent) 84%, #ffffff 16%);
     }
     .filter-bar {
       display: flex;
@@ -236,6 +254,7 @@
 
   <main>
     <h1 id="resultsTitle">Search Results for ""</h1>
+    <p class="did-you-mean" id="didYouMeanHint" hidden></p>
     <div class="filter-bar" role="tablist" aria-label="Search filters">
       <button class="filter-button active" type="button" data-filter="all" role="tab" aria-selected="true">All</button>
       <button class="filter-button" type="button" data-filter="movies" role="tab" aria-selected="false">Movies</button>
@@ -286,6 +305,7 @@
     const currentQuery = resolveSearchQuery(rawQuery);
 
     const resultsTitle = document.getElementById('resultsTitle');
+    const didYouMeanHint = document.getElementById('didYouMeanHint');
     const combinedSection = document.getElementById('combinedSection');
     const resultsMessage = document.getElementById('resultsMessage');
     const combinedResults = document.getElementById('combinedResults');
@@ -317,6 +337,89 @@
 
     function normalizeTitle(value) {
       return (value || '').trim().toLowerCase();
+    }
+
+    function normalizeSearchText(value) {
+      return String(value || '').trim().toLowerCase();
+    }
+
+    function levenshteinDistance(left = '', right = '') {
+      const a = normalizeSearchText(left);
+      const b = normalizeSearchText(right);
+      if (!a || !b) return Number.MAX_SAFE_INTEGER;
+      if (a === b) return 0;
+      const matrix = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+      for (let row = 0; row <= a.length; row += 1) matrix[row][0] = row;
+      for (let column = 0; column <= b.length; column += 1) matrix[0][column] = column;
+      for (let row = 1; row <= a.length; row += 1) {
+        for (let column = 1; column <= b.length; column += 1) {
+          const cost = a[row - 1] === b[column - 1] ? 0 : 1;
+          matrix[row][column] = Math.min(
+            matrix[row - 1][column] + 1,
+            matrix[row][column - 1] + 1,
+            matrix[row - 1][column - 1] + cost
+          );
+        }
+      }
+      return matrix[a.length][b.length];
+    }
+
+    function resolveDidYouMeanQuery(query = '', candidates = []) {
+      const normalizedQuery = normalizeSearchText(query);
+      if (normalizedQuery.length < 3) return '';
+      const uniqueCandidates = [...new Set((Array.isArray(candidates) ? candidates : [])
+        .map((candidate) => String(candidate || '').trim())
+        .filter(Boolean))];
+      let bestCandidate = '';
+      let bestDistance = Number.MAX_SAFE_INTEGER;
+      const maxDistance = Math.max(2, Math.floor(normalizedQuery.length * 0.35));
+      uniqueCandidates.forEach((candidate) => {
+        const normalizedCandidate = normalizeSearchText(candidate);
+        if (!normalizedCandidate || normalizedCandidate === normalizedQuery) return;
+        const distance = levenshteinDistance(normalizedQuery, normalizedCandidate);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestCandidate = candidate;
+        }
+      });
+      if (!bestCandidate || bestDistance > maxDistance) return '';
+      return bestCandidate;
+    }
+
+    function loadSearchHistoryQueries(limit = 40) {
+      const settings = window.bilmTheme?.getSettings?.() || {};
+      if (settings.searchHistory === false || settings.incognito === true) return [];
+      try {
+        const raw = localStorage.getItem('bilm-search-history');
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+          .map((entry) => String(entry?.query || '').trim())
+          .filter(Boolean)
+          .slice(0, Math.max(0, Number(limit || 0) || 0));
+      } catch {
+        return [];
+      }
+    }
+
+    function setDidYouMeanSuggestion(query = '', candidates = []) {
+      if (!didYouMeanHint) return;
+      const suggestion = resolveDidYouMeanQuery(query, candidates);
+      if (!suggestion) {
+        didYouMeanHint.hidden = true;
+        didYouMeanHint.textContent = '';
+        return;
+      }
+      didYouMeanHint.hidden = false;
+      const href = `${BASE_URL}/search/?q=${encodeURIComponent(suggestion)}`;
+      didYouMeanHint.textContent = '';
+      const prefix = document.createTextNode('Did you mean ');
+      const link = document.createElement('a');
+      link.href = href;
+      link.textContent = suggestion;
+      const suffix = document.createTextNode('?');
+      didYouMeanHint.append(prefix, link, suffix);
     }
 
     function createMovieKey(title, year) {
@@ -849,6 +952,11 @@
       } else {
         items = cachedAll;
       }
+
+      setDidYouMeanSuggestion(queryNormalized, [
+        ...cachedAll.map((item) => item?.title),
+        ...loadSearchHistoryQueries(50)
+      ]);
 
       const validItems = sortItems(items.filter(item => Boolean(item.link)));
       currentVisibleItems = validItems;
