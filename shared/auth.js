@@ -3393,8 +3393,11 @@
 
   function applyLinkedShareOperationsToLocalStorage(operations = [], options = {}) {
     if (!Array.isArray(operations) || operations.length === 0) return false;
-    const { listOperations } = splitLinkedShareOperations(operations);
-    if (!listOperations.length) return false;
+    const { listOperations, sectorOperations } = splitLinkedShareOperations(operations);
+    const appliedStorageSectors = sectorOperations.length > 0
+      ? applyStorageSectorOperationsToLocalStorage(sectorOperations)
+      : false;
+    if (!listOperations.length) return appliedStorageSectors;
 
     const existingCache = readLinkedShareCache();
     const cache = {
@@ -3448,7 +3451,7 @@
       changedListKeys.add(listKey);
     });
 
-    if (!changedListKeys.size) return false;
+    if (!changedListKeys.size) return appliedStorageSectors;
     writeLinkedShareCache({
       ...cache,
       lists
