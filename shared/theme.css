@@ -1,6 +1,7 @@
 :root {
   --accent: #34d0ff;
   --button-accent: #34d0ff;
+  --particles-opacity: 0.9;
   --accent-soft: rgba(52, 208, 255, 0.18);
   --accent-glow: rgba(52, 208, 255, 0.45);
   --accent-strong: rgba(52, 208, 255, 0.72);
@@ -101,6 +102,18 @@ body {
   background-color: var(--bg-main);
   color: var(--text-primary);
   overflow-x: hidden;
+}
+
+#bilmGlobalParticlesCanvas {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  user-select: none;
+  z-index: -1;
+  opacity: var(--particles-opacity);
 }
 
 body {

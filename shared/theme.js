@@ -110,6 +110,185 @@ function withBase(path) {
     root.style.setProperty('--button-accent', safeButtonAccent);
   };
 
+  const GLOBAL_PARTICLE_CANVAS_ID = 'bilmGlobalParticlesCanvas';
+  const globalParticlesState = {
+    initialized: false,
+    canvas: null,
+    ctx: null,
+    dots: [],
+    animationId: null,
+    particlesEnabled: true,
+    motionEnabled: true
+  };
+
+  const hasLocalParticleCanvas = () => Boolean(document.getElementById('bgCanvas'));
+
+  const getAdaptiveDotCount = () => {
+    const area = Math.max(1, (window.innerWidth || 0) * (window.innerHeight || 0));
+    return Math.max(36, Math.min(120, Math.round(area / 26000)));
+  };
+
+  const getParticleAccentColor = () => {
+    try {
+      return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || DEFAULT_SETTINGS.accent;
+    } catch {
+      return DEFAULT_SETTINGS.accent;
+    }
+  };
+
+  const ensureGlobalParticleCanvas = () => {
+    if (hasLocalParticleCanvas()) {
+      if (globalParticlesState.canvas) {
+        try {
+          globalParticlesState.canvas.remove();
+        } catch {
+          // Ignore remove failures.
+        }
+      }
+      globalParticlesState.canvas = null;
+      globalParticlesState.ctx = null;
+      return null;
+    }
+
+    if (globalParticlesState.canvas?.isConnected) return globalParticlesState.canvas;
+
+    let canvas = document.getElementById(GLOBAL_PARTICLE_CANVAS_ID);
+    if (!canvas) {
+      canvas = document.createElement('canvas');
+      canvas.id = GLOBAL_PARTICLE_CANVAS_ID;
+      canvas.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(canvas);
+    }
+    globalParticlesState.canvas = canvas;
+    globalParticlesState.ctx = canvas.getContext('2d');
+    return canvas;
+  };
+
+  const resizeGlobalParticles = ({ reseed = true } = {}) => {
+    const canvas = globalParticlesState.canvas;
+    if (!canvas) return;
+    canvas.width = window.innerWidth || 0;
+    canvas.height = window.innerHeight || 0;
+    if (!reseed && globalParticlesState.dots.length > 0) return;
+
+    const count = getAdaptiveDotCount();
+    globalParticlesState.dots = Array.from({ length: count }, () => ({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: (Math.random() * 2) + 1,
+      dx: (Math.random() - 0.5) * 0.7,
+      dy: (Math.random() - 0.5) * 0.7
+    }));
+  };
+
+  const renderGlobalParticlesFrame = (shouldMove = true) => {
+    const canvas = globalParticlesState.canvas;
+    const ctx = globalParticlesState.ctx;
+    if (!canvas || !ctx) return;
+
+    const accent = getParticleAccentColor();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.shadowColor = accent;
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = accent;
+    ctx.globalAlpha = 0.9;
+
+    globalParticlesState.dots.forEach((dot) => {
+      ctx.beginPath();
+      ctx.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (!shouldMove) return;
+      dot.x += dot.dx;
+      dot.y += dot.dy;
+      if (dot.x < 0 || dot.x > canvas.width) dot.dx *= -1;
+      if (dot.y < 0 || dot.y > canvas.height) dot.dy *= -1;
+    });
+
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  };
+
+  const stopGlobalParticles = () => {
+    if (!globalParticlesState.animationId) return;
+    cancelAnimationFrame(globalParticlesState.animationId);
+    globalParticlesState.animationId = null;
+  };
+
+  const animateGlobalParticles = () => {
+    stopGlobalParticles();
+    const step = () => {
+      renderGlobalParticlesFrame(true);
+      globalParticlesState.animationId = requestAnimationFrame(step);
+    };
+    step();
+  };
+
+  const applyGlobalParticles = (settings = null) => {
+    const effectiveSettings = settings || loadSettings();
+    const particlesEnabled = effectiveSettings?.particles !== false;
+    const motionEnabled = effectiveSettings?.motion !== false;
+
+    globalParticlesState.particlesEnabled = particlesEnabled;
+    globalParticlesState.motionEnabled = motionEnabled;
+
+    const canvas = ensureGlobalParticleCanvas();
+    if (!canvas || !globalParticlesState.ctx) {
+      stopGlobalParticles();
+      return;
+    }
+
+    stopGlobalParticles();
+    if (!particlesEnabled) {
+      canvas.style.display = 'none';
+      globalParticlesState.ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
+    canvas.style.display = 'block';
+    resizeGlobalParticles({ reseed: globalParticlesState.dots.length === 0 });
+
+    if (motionEnabled) {
+      animateGlobalParticles();
+      return;
+    }
+    renderGlobalParticlesFrame(false);
+  };
+
+  const initGlobalParticles = () => {
+    if (globalParticlesState.initialized) return;
+    globalParticlesState.initialized = true;
+    applyGlobalParticles(loadSettings());
+
+    window.addEventListener('resize', () => {
+      if (!globalParticlesState.particlesEnabled) return;
+      resizeGlobalParticles({ reseed: true });
+      if (!globalParticlesState.motionEnabled) {
+        renderGlobalParticlesFrame(false);
+      }
+    }, { passive: true });
+
+    window.addEventListener('orientationchange', () => {
+      if (!globalParticlesState.particlesEnabled) return;
+      resizeGlobalParticles({ reseed: true });
+      if (!globalParticlesState.motionEnabled) {
+        renderGlobalParticlesFrame(false);
+      }
+    });
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') {
+        stopGlobalParticles();
+        return;
+      }
+      applyGlobalParticles(loadSettings());
+    });
+
+    window.addEventListener('bilm:theme-changed', (event) => {
+      applyGlobalParticles(event.detail);
+    });
+  };
+
   const applyTheme = (settings) => {
     const root = document.documentElement;
     applyAccent(root, settings.accent);
@@ -315,6 +494,12 @@ function withBase(path) {
 
   currentSettings = loadSettings();
   applyTheme(currentSettings);
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initGlobalParticles, { once: true });
+  } else {
+    initGlobalParticles();
+  }
 
   window.addEventListener('storage', (event) => {
     if (event.key !== STORAGE_KEY) return;
