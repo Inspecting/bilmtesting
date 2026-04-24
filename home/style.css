@@ -66,7 +66,7 @@ main.visible {
 
 .search-container {
   position: relative;
-  z-index: 1;
+  z-index: 20;
   width: min(100%, 820px);
   margin: 0 auto;
   min-width: 0;
@@ -78,6 +78,7 @@ main.visible {
     linear-gradient(145deg, color-mix(in srgb, var(--surface-1) 95%, transparent), color-mix(in srgb, var(--surface-2) 84%, transparent));
   box-shadow: var(--shadow-lg);
   text-align: center;
+  overflow: visible;
 }
 
 .search-container h1 {
@@ -112,11 +113,14 @@ main.visible {
 
 form#homeSearchForm {
   position: relative;
+  z-index: 22;
+  overflow: visible;
 }
 
 .home-search-input-wrap {
   position: relative;
   margin-top: 18px;
+  z-index: 24;
 }
 
 input#searchInput {
