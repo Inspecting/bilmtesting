@@ -12,6 +12,7 @@
 
 
   const DATA_API_BASE = '/api/data';
+  const DATA_API_DIRECT_BASE = 'https://data-api.watchbilm.org';
   const CHAT_API_BASE = 'https://chat-api.watchbilm.org';
   const LIST_SYNC_PUSH_PATH = '/sync/lists/push';
   const LIST_SYNC_PULL_PATH = '/sync/lists/pull';
@@ -53,8 +54,20 @@
   function buildTransferApiUrl(path = '/') {
     const normalizedPath = String(path || '/').trim() || '/';
     const safePath = normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`;
-    const relative = `${DATA_API_BASE}${safePath}`;
-    return new URL(relative, window.location.href);
+    const proxiedPath = `${DATA_API_BASE}${safePath}`;
+    const origin = String(window?.location?.origin || '').trim();
+    if (/^https?:\/\//i.test(origin)) {
+      try {
+        return new URL(proxiedPath, origin);
+      } catch {}
+    }
+    const href = String(window?.location?.href || '').trim();
+    if (/^https?:\/\//i.test(href)) {
+      try {
+        return new URL(proxiedPath, href);
+      } catch {}
+    }
+    return new URL(safePath, `${DATA_API_DIRECT_BASE.replace(/\/+$/, '')}/`);
   }
 
   async function getTransferAuthHeader(user) {
@@ -84,7 +97,9 @@
 
   async function saveSnapshotToTransferApi(user, userId, snapshot) {
     if (transferApiDisabled) return false;
-    const url = `${DATA_API_BASE}/?userId=${encodeURIComponent(userId)}`;
+    const endpoint = buildTransferApiUrl('/');
+    endpoint.searchParams.set('userId', userId);
+    const url = endpoint.toString();
     const authorization = await getTransferAuthHeader(user);
     const normalizedSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : null;
     if (!normalizedSnapshot) {
@@ -122,7 +137,9 @@
 
   async function loadSnapshotFromTransferApi(user, userId) {
     if (transferApiDisabled) return null;
-    const url = `${DATA_API_BASE}/?userId=${encodeURIComponent(userId)}`;
+    const endpoint = buildTransferApiUrl('/');
+    endpoint.searchParams.set('userId', userId);
+    const url = endpoint.toString();
     const authorization = await getTransferAuthHeader(user);
     let response;
     try {
@@ -169,7 +186,7 @@
       return { ok: true, processed: 0, cursorMs: 0 };
     }
 
-    const url = `${DATA_API_BASE}${SECTOR_SYNC_PUSH_PATH}`;
+    const url = buildTransferApiUrl(SECTOR_SYNC_PUSH_PATH).toString();
     const authorization = await getTransferAuthHeader(user);
     let response;
     try {
@@ -204,7 +221,7 @@
       if (!legacyOperations.length) {
         return { ok: true, processed: 0, cursorMs: 0, legacy: true };
       }
-      const legacyResponse = await fetch(`${DATA_API_BASE}${LIST_SYNC_PUSH_PATH}`, {
+      const legacyResponse = await fetch(buildTransferApiUrl(LIST_SYNC_PUSH_PATH).toString(), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -320,7 +337,7 @@
     const sectorOperations = Array.isArray(operations)
       ? operations.map((operation) => toSectorOperation(operation)).filter(Boolean)
       : [];
-    const url = `${DATA_API_BASE}${SECTOR_SYNC_BOOTSTRAP_PATH}`;
+    const url = buildTransferApiUrl(SECTOR_SYNC_BOOTSTRAP_PATH).toString();
     const authorization = await getTransferAuthHeader(user);
     let response;
     try {
