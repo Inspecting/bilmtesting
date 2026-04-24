@@ -343,6 +343,17 @@
       return String(value || '').trim().toLowerCase();
     }
 
+    function normalizeFuzzyToken(value) {
+      const lowered = normalizeSearchText(value);
+      if (!lowered) return '';
+      return lowered
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
     function levenshteinDistance(left = '', right = '') {
       const a = normalizeSearchText(left);
       const b = normalizeSearchText(right);
@@ -365,25 +376,73 @@
     }
 
     function resolveDidYouMeanQuery(query = '', candidates = []) {
-      const normalizedQuery = normalizeSearchText(query);
-      if (normalizedQuery.length < 3) return '';
-      const uniqueCandidates = [...new Set((Array.isArray(candidates) ? candidates : [])
-        .map((candidate) => String(candidate || '').trim())
-        .filter(Boolean))];
-      let bestCandidate = '';
-      let bestDistance = Number.MAX_SAFE_INTEGER;
-      const maxDistance = Math.max(2, Math.floor(normalizedQuery.length * 0.35));
-      uniqueCandidates.forEach((candidate) => {
-        const normalizedCandidate = normalizeSearchText(candidate);
+      const normalizedQuery = normalizeFuzzyToken(query);
+      if (!normalizedQuery) return '';
+      if (normalizedQuery.length < 5) return '';
+
+      const scoredCandidates = [];
+      const candidateMap = new Map();
+      (Array.isArray(candidates) ? candidates : []).forEach((entry) => {
+        const rawText = typeof entry === 'string'
+          ? entry
+          : String(entry?.text || '').trim();
+        const text = String(rawText || '').trim();
+        if (!text) return;
+        const normalizedCandidate = normalizeFuzzyToken(text);
         if (!normalizedCandidate || normalizedCandidate === normalizedQuery) return;
-        const distance = levenshteinDistance(normalizedQuery, normalizedCandidate);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestCandidate = candidate;
+        if (candidateMap.has(normalizedCandidate)) {
+          const existing = candidateMap.get(normalizedCandidate);
+          const nextFamiliarity = Number(entry?.familiarity || 0) || 0;
+          if (nextFamiliarity > existing.familiarity) {
+            existing.familiarity = nextFamiliarity;
+            existing.display = text;
+            existing.source = String(entry?.source || existing.source || 'results').trim() || 'results';
+          }
+          return;
+        }
+        candidateMap.set(normalizedCandidate, {
+          normalized: normalizedCandidate,
+          display: text,
+          familiarity: Number(entry?.familiarity || 0) || 0,
+          source: String(entry?.source || 'results').trim() || 'results'
+        });
+      });
+      scoredCandidates.push(...candidateMap.values());
+
+      let best = null;
+      scoredCandidates.forEach((candidate) => {
+        const length = Math.max(normalizedQuery.length, candidate.normalized.length);
+        const maxDistance = length <= 6
+          ? 1
+          : length <= 9
+            ? 2
+            : 3;
+        const distance = levenshteinDistance(normalizedQuery, candidate.normalized);
+        if (!Number.isFinite(distance) || distance <= 0 || distance > maxDistance) return;
+
+        const prefixMatch = normalizedQuery.slice(0, 2) === candidate.normalized.slice(0, 2);
+        if (!prefixMatch && distance > 1) return;
+        if (!prefixMatch && candidate.source !== 'history') return;
+
+        const familiarity = Number(candidate.familiarity || 0) || 0;
+        const familiarEnough = candidate.source === 'history' || familiarity >= 18;
+        if (!familiarEnough) return;
+
+        const lengthPenalty = Math.abs(normalizedQuery.length - candidate.normalized.length) * 4;
+        const prefixPenalty = prefixMatch ? 0 : 10;
+        const familiarityBoost = Math.min(120, familiarity) * 0.08;
+        const score = distance * 30 + lengthPenalty + prefixPenalty - familiarityBoost;
+
+        if (!best || score < best.score) {
+          best = {
+            text: candidate.display,
+            score
+          };
         }
       });
-      if (!bestCandidate || bestDistance > maxDistance) return '';
-      return bestCandidate;
+
+      if (!best || best.score >= 38) return '';
+      return best.text;
     }
 
     function loadSearchHistoryQueries(limit = 40) {
@@ -954,8 +1013,16 @@
       }
 
       setDidYouMeanSuggestion(queryNormalized, [
-        ...cachedAll.map((item) => item?.title),
-        ...loadSearchHistoryQueries(50)
+        ...cachedAll.map((item) => ({
+          text: item?.title,
+          familiarity: Number(item?.popularity || 0) || 0,
+          source: 'results'
+        })),
+        ...loadSearchHistoryQueries(50).map((query) => ({
+          text: query,
+          familiarity: 220,
+          source: 'history'
+        }))
       ]);
 
       const validItems = sortItems(items.filter(item => Boolean(item.link)));
