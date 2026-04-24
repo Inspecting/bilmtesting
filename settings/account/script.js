@@ -639,7 +639,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const accountFound = response?.accountFound === true;
       const requesterBlocked = response?.requesterBlocked === true;
       const targetBlocked = response?.targetBlocked === true;
-      const canRequest = response?.canRequest === true || (accountFound && !requesterBlocked && !targetBlocked);
+      const canRequest = response?.canRequest !== false && !requesterBlocked && !targetBlocked;
       accountLinkTargetCapabilities = {
         ok: response?.ok !== false,
         targetEmail: String(response?.targetEmail || normalizedEmail).trim().toLowerCase(),
@@ -650,14 +650,14 @@ document.addEventListener('DOMContentLoaded', () => {
       };
 
       if (accountLinkEmailStatus && !quiet) {
-        if (!accountFound) {
-          accountLinkEmailStatus.textContent = 'No account found for that email.';
-        } else if (requesterBlocked) {
+        if (requesterBlocked) {
           accountLinkEmailStatus.textContent = 'You already have a pending or active link.';
         } else if (targetBlocked) {
           accountLinkEmailStatus.textContent = 'That account cannot receive a new request right now.';
-        } else {
+        } else if (accountFound) {
           accountLinkEmailStatus.textContent = 'Email found. Ready to send.';
+        } else {
+          accountLinkEmailStatus.textContent = 'Email not confirmed yet. You can still send a pending request.';
         }
       }
       renderAccountLinkScopeOptions({
@@ -997,9 +997,6 @@ document.addEventListener('DOMContentLoaded', () => {
       await lookupAccountLinkCapabilities(targetEmail, { quiet: true });
     }
     if (accountLinkModalMode === 'create') {
-      if (!accountLinkTargetCapabilities?.accountFound) {
-        throw new Error('No account found for that email.');
-      }
       if (accountLinkTargetCapabilities?.requesterBlocked) {
         throw new Error('You already have a pending or active account link.');
       }
