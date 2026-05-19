@@ -1,364 +1,218 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bilm - Roulette Lab</title>
-  <meta name="theme-color" content="#0a0a0a" />
-
-  <link rel="manifest" href="../manifest.json" />
-  <link rel="apple-touch-icon" href="../icon.png" />
-  <link rel="icon" type="image/png" href="../icon.png" />
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="../shared/theme.css" />
-  <link rel="stylesheet" href="./rng.css" />
-  <script src="../shared/access.js"></script>
-  <script src="../shared/theme.js"></script>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Roulette — Red / Black (Practice Mode)</title>
+<style>
+  :root{
+    --bg:#061226;
+    --panel:#0e2433;
+    --accent:#ffbf00;
+    --muted:#8da6c1;
+    --red:#e24b4b;
+    --black:#111827;
+    --glass: rgba(255,255,255,0.03);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial;background:
+    radial-gradient(800px 400px at 10% 10%, rgba(255,255,255,0.02), transparent 6%),
+    linear-gradient(180deg,#04101b 0%, #071825 100%);color:#eaf6ff;}
+  .wrap{max-width:980px;margin:18px auto;padding:18px;display:grid;grid-template-columns:1fr 360px;gap:18px}
+  h1{margin:0;color:var(--accent);font-size:20px}
+  .subtitle{color:var(--muted);font-size:13px}
+  .panel{background:var(--glass);border-radius:12px;padding:14px;box-shadow:0 12px 30px rgba(0,0,0,0.6)}
+  button{background:var(--accent);border:none;padding:8px 12px;border-radius:8px;color:#06121b;font-weight:700;cursor:pointer;box-shadow:0 8px 18px rgba(0,0,0,0.45);transition:transform .08s}
+  button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:inherit}
+  button:active{transform:scale(.98)}
+  .selected{outline:3px solid rgba(255,191,0,0.18)!important;box-shadow:0 0 18px rgba(255,191,0,0.08)!important;transform:scale(1.02)!important}
+  .balance{font-weight:800;font-size:18px;color:#dff8ff}
+  input[type=number]{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit;width:110px}
+  .message{padding:10px;border-radius:8px;background:rgba(255,255,255,0.02);font-weight:700;text-align:center}
+  canvas#wheel{width:100%;height:100%;max-height:420px;border-radius:999px;background:radial-gradient(circle at 50% 50%, rgba(255,255,255,0.02), transparent 20%)}
+  @media(max-width:920px){.wrap{grid-template-columns:1fr;padding:12px}}
+</style>
 </head>
 <body>
-  <div id="navbarContainer"></div>
-  <script src="../shared/navbar.js"></script>
-
-  <main class="rng-page">
-    <header class="rng-hero panel">
-      <div class="rng-hero-copy">
-        <p class="rng-kicker">Casino Lab</p>
-        <h1>Roulette + RNG Tools</h1>
-        <p>Spin a visual roulette wheel with bankroll and strategy controls, plus keep number/list/coin/dice utilities in one place.</p>
+  <div class="wrap">
+    <section class="panel">
+      <h1>Roulette — Red / Black</h1>
+      <div class="subtitle">Color is chosen before spin. Wheel lands centered on that color.</div>
+      
+      <!-- Practice Balance Setter -->
+      <div style="margin-top:10px;">
+        <label>Set Balance for Practice: <input id="practiceBalanceInput" type="number" min="1" value="1000"></label>
+        <button id="applyBalanceBtn" class="ghost">Apply</button>
       </div>
-      <p class="rng-status" id="rngStatus">Ready</p>
-    </header>
 
-    <section class="panel rng-global-controls" aria-label="Global RNG controls">
-      <label class="field" for="engineSelect">
-        <span>Random engine</span>
-        <select id="engineSelect">
-          <option value="crypto">Crypto secure</option>
-          <option value="seeded">Seeded deterministic</option>
-          <option value="math">Math.random</option>
-        </select>
-      </label>
-      <label class="field" for="seedInput">
-        <span>Seed</span>
-        <input id="seedInput" type="text" placeholder="optional-seed" autocomplete="off" />
-      </label>
-      <button id="savePresetBtn" class="ghost-btn" type="button">Save preset</button>
-      <button id="clearHistoryBtn" class="ghost-btn" type="button">Clear history</button>
+      <!-- Current Balance Display -->
+      <div style="margin-top:10px;">
+        Balance: $<span id="balanceDisplay">1000</span><br>
+        <label>Bet: <input id="betInput" type="number" value="10"></label>
+        <button id="halfBtn" class="ghost">Half</button>
+        <button id="doubleBtn" class="ghost">Double</button><br><br>
+        <button id="betRed" style="background:var(--red);color:#fff">Bet Red</button>
+        <button id="betBlack" style="background:var(--black);color:#fff">Bet Black</button>
+        <button id="spinBtn" class="ghost">Spin</button>
+        <button id="resetBtn" class="ghost">Reset</button>
+      </div>
+      <p class="message" id="message">Pick a color, set your bet, and spin!</p>
     </section>
+    <section class="panel">
+      <canvas id="wheel" width="500" height="500"></canvas>
+      <div style="text-align:center;margin-top:10px;">
+        Last outcome: <strong id="lastOutcome">—</strong>
+      </div>
+    </section>
+  </div>
 
-    <div class="rng-layout">
-      <section class="panel rng-main-panel">
-        <div class="mode-tabs" role="tablist" aria-label="RNG modes">
-          <button class="mode-tab is-active" data-mode="roulette" type="button" role="tab" aria-selected="true">Roulette</button>
-          <button class="mode-tab" data-mode="number" type="button" role="tab" aria-selected="false">Number</button>
-          <button class="mode-tab" data-mode="list" type="button" role="tab" aria-selected="false">List picker</button>
-          <button class="mode-tab" data-mode="coin" type="button" role="tab" aria-selected="false">Coin flip</button>
-          <button class="mode-tab" data-mode="dice" type="button" role="tab" aria-selected="false">Dice</button>
-        </div>
+<script>
+(() => {
+  const canvas = document.getElementById('wheel');
+  const ctx = canvas.getContext('2d');
+  const betInput = document.getElementById('betInput');
+  const halfBtn = document.getElementById('halfBtn');
+  const doubleBtn = document.getElementById('doubleBtn');
+  const betRedBtn = document.getElementById('betRed');
+  const betBlackBtn = document.getElementById('betBlack');
+  const spinBtn = document.getElementById('spinBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const messageEl = document.getElementById('message');
+  const lastOutcomeEl = document.getElementById('lastOutcome');
+  const balanceDisplay = document.getElementById('balanceDisplay');
 
-        <section class="mode-panel roulette-panel" id="mode-roulette" data-mode-panel="roulette">
-          <div class="roulette-layout">
-            <article class="roulette-wheel-wrap">
-              <div class="wheel-stage">
-                <canvas id="rouletteWheel" width="560" height="560"></canvas>
-                <div class="wheel-pointer" aria-hidden="true"></div>
-              </div>
-              <div class="wheel-readout">
-                <p>Last outcome: <strong id="rouletteLastOutcome">-</strong></p>
-                <p>Landing: <strong id="rouletteLanding">-</strong></p>
-              </div>
-              <div class="recent-strip" id="rouletteRecentStrip">
-                <p class="muted">No spins yet.</p>
-              </div>
-            </article>
+  // New practice balance elements
+  const practiceBalanceInput = document.getElementById('practiceBalanceInput');
+  const applyBalanceBtn = document.getElementById('applyBalanceBtn');
 
-            <article class="roulette-controls">
-              <div class="compact-card">
-                <p class="card-label">Practice bankroll</p>
-                <p class="big-balance">$<span id="balanceDisplay">1000.00</span></p>
-                <div class="field-row">
-                  <input id="balanceInput" type="number" min="1" value="1000" />
-                  <button id="applyBalanceBtn" class="ghost-btn" type="button">Apply</button>
-                </div>
-              </div>
+  let balance = Number(localStorage.getItem('balance') || 1000);
+  let bet = 10;
+  let selectedColor = null;
+  let spinning = false;
+  let rotation = 0;
+  const segCount = 36;
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const radius = 240;
 
-              <div class="compact-card">
-                <p class="card-label">Bet amount</p>
-                <div class="field-row">
-                  <input id="betAmountInput" type="number" min="1" value="10" />
-                  <button id="betHalfBtn" class="ghost-btn" type="button">Half</button>
-                  <button id="betDoubleBtn" class="ghost-btn" type="button">Double</button>
-                  <button id="betMaxBtn" class="ghost-btn" type="button">Max</button>
-                  <button id="betResetBtn" class="ghost-btn" type="button">Reset</button>
-                </div>
-              </div>
+  const segments = Array.from({length: segCount}, (_, i) => ({
+    color: i % 2 === 0 ? 'red' : 'black',
+    index: i
+  }));
 
-              <div class="compact-card">
-                <p class="card-label">Bet on</p>
-                <div class="bet-grid" id="betGrid">
-                  <button class="bet-option bet-red" data-bet="red" type="button">Red</button>
-                  <button class="bet-option bet-black" data-bet="black" type="button">Black</button>
-                  <button class="bet-option bet-green" data-bet="green" type="button">Green</button>
-                  <button class="bet-option" data-bet="odd" type="button">Odd</button>
-                  <button class="bet-option" data-bet="even" type="button">Even</button>
-                  <button class="bet-option" data-bet="low" type="button">1-18</button>
-                  <button class="bet-option" data-bet="high" type="button">19-36</button>
-                </div>
-              </div>
+  function drawWheel(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    const anglePer = (Math.PI*2)/segCount;
+    for(let i=0;i<segCount;i++){
+      const start = rotation + i*anglePer;
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      ctx.arc(cx,cy,radius,start,start+anglePer);
+      ctx.closePath();
+      ctx.fillStyle = segments[i].color === 'red' ? '#e24b4b' : '#111';
+      ctx.fill();
+    }
+    // pointer
+    ctx.beginPath();
+    ctx.moveTo(cx,cy-radius-10);
+    ctx.lineTo(cx-10,cy-radius+15);
+    ctx.lineTo(cx+10,cy-radius+15);
+    ctx.closePath();
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+  }
 
-              <div class="compact-card">
-                <p class="card-label">Spin controls</p>
-                <div class="field-row">
-                  <button id="spinBtn" class="primary-btn" type="button">Spin wheel</button>
-                  <button id="autoSpinBtn" class="ghost-btn" type="button">Auto spin</button>
-                  <button id="stopAutoBtn" class="ghost-btn" type="button">Stop auto</button>
-                  <button id="resetSessionBtn" class="ghost-btn" type="button">Reset session</button>
-                </div>
-              </div>
+  function updateUI(){
+    balanceDisplay.textContent = balance.toFixed(2);
+    betInput.value = bet;
+    betRedBtn.classList.toggle('selected', selectedColor==='red');
+    betBlackBtn.classList.toggle('selected', selectedColor==='black');
+    practiceBalanceInput.value = balance;
+  }
 
-              <div class="compact-card">
-                <p class="card-label">Advanced wheel settings</p>
-                <div class="field-grid roulette-settings-grid">
-                  <label class="field" for="wheelTypeSelect">
-                    <span>Wheel type</span>
-                    <select id="wheelTypeSelect">
-                      <option value="classic">Classic (36)</option>
-                      <option value="european">European (single 0)</option>
-                      <option value="american">American (0 + 00)</option>
-                    </select>
-                  </label>
-                  <label class="field" for="rouletteStrategySelect">
-                    <span>Strategy</span>
-                    <select id="rouletteStrategySelect">
-                      <option value="flat">Flat</option>
-                      <option value="martingale">Martingale</option>
-                      <option value="reverse-martingale">Reverse Martingale</option>
-                      <option value="dalembert">D'Alembert</option>
-                    </select>
-                  </label>
-                  <label class="field" for="rouletteBiasSelect">
-                    <span>Bias test</span>
-                    <select id="rouletteBiasSelect">
-                      <option value="none">None</option>
-                      <option value="red">Favor red</option>
-                      <option value="black">Favor black</option>
-                      <option value="green">Favor green</option>
-                    </select>
-                  </label>
-                  <label class="field" for="rouletteColorPayoutInput">
-                    <span>Color payout</span>
-                    <input id="rouletteColorPayoutInput" type="number" min="1" step="0.1" value="2" />
-                  </label>
-                  <label class="field" for="rouletteGreenPayoutInput">
-                    <span>Green payout</span>
-                    <input id="rouletteGreenPayoutInput" type="number" min="1" step="0.1" value="14" />
-                  </label>
-                  <label class="field" for="spinDurationInput">
-                    <span>Spin ms</span>
-                    <input id="spinDurationInput" type="number" min="400" max="10000" step="100" value="2600" />
-                  </label>
-                  <label class="field" for="spinLoopsInput">
-                    <span>Extra loops</span>
-                    <input id="spinLoopsInput" type="number" min="1" max="12" value="5" />
-                  </label>
-                  <label class="field" for="instantResultSelect">
-                    <span>Instant result</span>
-                    <select id="instantResultSelect">
-                      <option value="auto">Auto</option>
-                      <option value="off">Off</option>
-                      <option value="on">On</option>
-                    </select>
-                  </label>
-                  <label class="field" for="rouletteSoundSelect">
-                    <span>Sound</span>
-                    <select id="rouletteSoundSelect">
-                      <option value="off">Off</option>
-                      <option value="on">On</option>
-                    </select>
-                  </label>
-                  <label class="field" for="autoSpinCountInput">
-                    <span>Auto spins</span>
-                    <input id="autoSpinCountInput" type="number" min="1" max="500" value="12" />
-                  </label>
-                  <label class="field" for="autoSpinDelayInput">
-                    <span>Auto delay ms</span>
-                    <input id="autoSpinDelayInput" type="number" min="150" max="10000" step="50" value="700" />
-                  </label>
-                </div>
-              </div>
+  function setMessage(t){ messageEl.textContent = t; }
 
-              <p class="roulette-message" id="rouletteMessage">Pick a bet and spin.</p>
-            </article>
-          </div>
-        </section>
+  function pickWinningColor(){ return Math.random()<0.5?'red':'black'; }
 
-        <section class="mode-panel" id="mode-number" data-mode-panel="number" hidden>
-          <div class="field-grid">
-            <label class="field" for="numberMin">
-              <span>Minimum</span>
-              <input id="numberMin" type="number" value="1" />
-            </label>
-            <label class="field" for="numberMax">
-              <span>Maximum</span>
-              <input id="numberMax" type="number" value="100" />
-            </label>
-            <label class="field" for="numberCount">
-              <span>How many</span>
-              <input id="numberCount" type="number" min="1" max="100" value="1" />
-            </label>
-            <label class="field" for="numberDecimals">
-              <span>Decimals</span>
-              <input id="numberDecimals" type="number" min="0" max="6" value="0" />
-            </label>
-            <label class="field" for="numberUnique">
-              <span>Unique values</span>
-              <select id="numberUnique">
-                <option value="off">Allow repeats</option>
-                <option value="on">No repeats</option>
-              </select>
-            </label>
-            <label class="field" for="numberSort">
-              <span>Sort output</span>
-              <select id="numberSort">
-                <option value="none">Keep draw order</option>
-                <option value="asc">Ascending</option>
-                <option value="desc">Descending</option>
-              </select>
-            </label>
-          </div>
-        </section>
+  function pickIndexForColor(c){
+    const matches = segments.filter(s=>s.color===c);
+    return matches[Math.floor(Math.random()*matches.length)].index;
+  }
 
-        <section class="mode-panel" id="mode-list" data-mode-panel="list" hidden>
-          <label class="field" for="listItems">
-            <span>Items (one per line, optional weight with <code>|</code>)</span>
-            <textarea id="listItems" rows="8" spellcheck="false">Blue team
-Red team
-Gold team
-Green team</textarea>
-          </label>
-          <div class="field-grid">
-            <label class="field" for="listCount">
-              <span>How many picks</span>
-              <input id="listCount" type="number" min="1" max="100" value="1" />
-            </label>
-            <label class="field" for="listUnique">
-              <span>Unique picks</span>
-              <select id="listUnique">
-                <option value="on">No repeats</option>
-                <option value="off">Allow repeats</option>
-              </select>
-            </label>
-            <label class="field" for="listUseWeights">
-              <span>Use weights</span>
-              <select id="listUseWeights">
-                <option value="on">Enabled</option>
-                <option value="off">Ignore weights</option>
-              </select>
-            </label>
-          </div>
-        </section>
+  function computeTargetRotation(index){
+    const anglePer = (Math.PI*2)/segCount;
+    const segCenter = index*anglePer + anglePer/2;
+    return -Math.PI/2 - segCenter;
+  }
 
-        <section class="mode-panel" id="mode-coin" data-mode-panel="coin" hidden>
-          <div class="field-grid">
-            <label class="field" for="coinCount">
-              <span>Number of flips</span>
-              <input id="coinCount" type="number" min="1" max="500" value="1" />
-            </label>
-          </div>
-        </section>
+  function spinToColor(winningColor,onDone){
+    spinning = true;
+    const chosenIndex = pickIndexForColor(winningColor);
+    const baseTarget = computeTargetRotation(chosenIndex);
+    const extraRot = (4+Math.floor(Math.random()*4))*Math.PI*2;
+    const target = baseTarget + extraRot;
+    const start = rotation;
+    const startTime = performance.now();
+    const duration = 2500 + Math.random()*1500;
+    function ease(t){return 1-Math.pow(1-t,3);}
+    function frame(now){
+      const p=Math.min(1,(now-startTime)/duration);
+      rotation=start+(target-start)*ease(p);
+      drawWheel();
+      if(p<1)requestAnimationFrame(frame);
+      else{
+        rotation=target;
+        drawWheel();
+        spinning=false;
+        onDone();
+      }
+    }
+    requestAnimationFrame(frame);
+  }
 
-        <section class="mode-panel" id="mode-dice" data-mode-panel="dice" hidden>
-          <div class="field-grid">
-            <label class="field" for="diceCount">
-              <span>Dice count</span>
-              <input id="diceCount" type="number" min="1" max="30" value="2" />
-            </label>
-            <label class="field" for="diceSides">
-              <span>Sides per die</span>
-              <input id="diceSides" type="number" min="2" max="1000" value="6" />
-            </label>
-            <label class="field" for="diceModifier">
-              <span>Modifier</span>
-              <input id="diceModifier" type="number" value="0" />
-            </label>
-          </div>
-        </section>
+  function spin(){
+    if(spinning)return;
+    if(!selectedColor){setMessage('Select a color first!');return;}
+    bet=Math.max(1,Number(betInput.value)||1);
+    if(bet>balance){setMessage('Bet too high!');return;}
+    balance-=bet;
+    localStorage.setItem('balance',balance);
+    updateUI();
+    setMessage('Spinning...');
+    const winColor = pickWinningColor();
+    spinToColor(winColor,()=>{
+      if(selectedColor===winColor){
+        balance += bet*2; // double payout
+        localStorage.setItem('balance',balance);
+        setMessage(`You WON — ${winColor.toUpperCase()}! +$${bet}`);
+      }else{
+        setMessage(`You lost — ${winColor.toUpperCase()}.`);
+      }
+      lastOutcomeEl.textContent = winColor.toUpperCase();
+      updateUI();
+    });
+  }
 
-        <section class="result-panel">
-          <div class="result-head">
-            <h2 id="resultHeading">Round log</h2>
-            <p id="resultMeta">Spin to start.</p>
-          </div>
-          <output id="resultOutput" class="result-output" aria-live="polite">Ready.</output>
-          <div class="result-actions">
-            <button id="generateBtn" class="primary-btn" type="button">Spin / Generate</button>
-            <button id="copyResultBtn" class="ghost-btn" type="button">Copy result</button>
-          </div>
-        </section>
-      </section>
+  // Event bindings
+  spinBtn.onclick=spin;
+  betRedBtn.onclick=()=>{selectedColor='red';updateUI();setMessage('Betting on RED');};
+  betBlackBtn.onclick=()=>{selectedColor='black';updateUI();setMessage('Betting on BLACK');};
+  halfBtn.onclick=()=>{bet=Math.max(1,Math.floor(bet/2));updateUI();};
+  doubleBtn.onclick=()=>{bet=Math.min(balance,Math.floor(bet*2));updateUI();};
+  resetBtn.onclick=()=>{balance=1000;localStorage.setItem('balance',balance);updateUI();setMessage('Balance reset.');};
 
-      <aside class="panel rng-side-panel">
-        <section class="side-block">
-          <h2>Session stats</h2>
-          <div class="stats-grid">
-            <article>
-              <p class="stat-label">Total runs</p>
-              <p id="statRuns" class="stat-value">0</p>
-            </article>
-            <article>
-              <p class="stat-label">Wins</p>
-              <p id="statWins" class="stat-value">0</p>
-            </article>
-            <article>
-              <p class="stat-label">Losses</p>
-              <p id="statLosses" class="stat-value">0</p>
-            </article>
-            <article>
-              <p class="stat-label">Streak</p>
-              <p id="statStreak" class="stat-value">0</p>
-            </article>
-            <article>
-              <p class="stat-label">Last mode</p>
-              <p id="statLastMode" class="stat-value">-</p>
-            </article>
-            <article>
-              <p class="stat-label">Engine</p>
-              <p id="statEngine" class="stat-value">Crypto secure</p>
-            </article>
-          </div>
-        </section>
+  // Practice balance setter
+  applyBalanceBtn.onclick = ()=>{
+    const val = Math.max(1, Number(practiceBalanceInput.value) || 1000);
+    balance = val;
+    localStorage.setItem('balance',balance);
+    updateUI();
+    setMessage(`Practice balance set to $${balance}`);
+  }
 
-        <section class="side-block">
-          <div class="side-heading">
-            <h2>Presets</h2>
-          </div>
-          <div id="presetList" class="preset-list">
-            <p class="muted">No presets yet.</p>
-          </div>
-        </section>
-
-        <section class="side-block">
-          <div class="side-heading">
-            <h2>History</h2>
-          </div>
-          <div id="historyList" class="history-list">
-            <p class="muted">No results yet.</p>
-          </div>
-        </section>
-
-        <section class="side-block helper-block">
-          <h2>Tips</h2>
-          <ul>
-            <li>Roulette hotkeys: <kbd>R</kbd>, <kbd>B</kbd>, <kbd>G</kbd> to choose color; <kbd>Space</kbd> to spin.</li>
-            <li>Use seeded mode when you need reproducible rounds.</li>
-            <li>Utilities are still available in tabs if you need non-casino RNG.</li>
-          </ul>
-          <a class="subtle-link" href="./reset.html">Reset all local data</a>
-        </section>
-      </aside>
-    </div>
-  </main>
-
-  <script src="./rng.js"></script>
+  drawWheel();
+  updateUI();
+})();
+</script>
 </body>
 </html>

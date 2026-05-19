@@ -1,15 +1,11 @@
-<div class="global-banner" id="globalBanner" role="status" aria-live="polite" hidden aria-hidden="true">
-  <p class="global-banner-text"></p>
-  <button type="button" id="globalBannerCloseBtn" class="global-banner-close" aria-label="Dismiss global message">×</button>
-</div>
 <header>
   <nav class="navbar" role="navigation" aria-label="Primary navigation">
     <!-- Logo -->
     <div class="logo-container">
-      <a href="./home/" data-route="/home/" class="logo" title="Go to Home">
-        <span class="heart-icon" aria-hidden="true">❤</span>
+      <a href="/bilm/home/" class="logo" title="Go to Home">
+        <img class="heart-icon" src="https://icons.iconarchive.com/icons/microsoft/fluentui-emoji-3d/128/Purple-Heart-3d-icon.png" alt="Heart" />
         Bilm
-        <span class="heart-icon" aria-hidden="true">❤</span>
+        <img class="heart-icon" src="https://icons.iconarchive.com/icons/microsoft/fluentui-emoji-3d/128/Purple-Heart-3d-icon.png" alt="Heart" />
       </a>
     </div>
 
@@ -25,30 +21,14 @@
 
     <!-- Desktop Search Bar -->
     <div class="search-wrapper">
-      <form id="navbarSearchForm" class="search-input-wrapper" action="./search/" data-route-action="/search/" method="get">
-        <input type="text" id="searchInput" name="q" class="search-input" placeholder="Search..." autocomplete="off" spellcheck="false" />
-        <button type="submit" class="search-icon" aria-label="Search">
+      <div class="search-input-wrapper">
+        <input type="text" id="searchInput" class="search-input" placeholder="Search..." autocomplete="off" spellcheck="false" />
+        <div class="search-icon" aria-hidden="true">
           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-        </button>
-        <button type="button" id="desktopSearchClearBtn" class="search-clear" aria-label="Clear search input" hidden>×</button>
-        <div id="desktopSearchSuggestPanel" class="desktop-search-suggest" hidden>
-          <ul id="desktopSearchSuggestList" class="desktop-search-suggest-list" role="listbox" aria-label="Search suggestions"></ul>
-          <p id="desktopSearchSuggestHint" class="desktop-search-suggest-hint"></p>
-        </div>
-      </form>
-      <div class="account-menu-wrap" id="navbarAccountMenuWrap">
-        <button type="button" id="navbarAccountBtn" class="account-btn" aria-label="Account" aria-haspopup="menu" aria-expanded="false">Account</button>
-        <div class="account-menu" id="navbarAccountMenu" role="menu" hidden>
-          <button type="button" id="navbarAccountLoginBtn" class="account-menu-item" role="menuitem">Log In</button>
-          <button type="button" id="navbarAccountSignUpBtn" class="account-menu-item" role="menuitem">Sign Up</button>
-          <button type="button" id="navbarAccountSettingsBtn" class="account-menu-item" role="menuitem">Account Settings</button>
-          <button type="button" id="navbarAccountManualSyncBtn" class="account-menu-item" role="menuitem">Manual Sync</button>
-          <button type="button" id="navbarAccountSignOutBtn" class="account-menu-item" role="menuitem" hidden>Sign Out</button>
-          <p id="navbarAccountMenuHint" class="account-menu-hint">Log in for cloud sync.</p>
         </div>
       </div>
     </div>
@@ -58,34 +38,19 @@
 <!-- Mobile Bottom Navbar -->
 <nav class="mobile-bottom-nav" role="navigation" aria-label="Mobile navigation">
   <button data-page="home" aria-label="Home">
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M3 10.5 12 3l9 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-      <path d="M6 9.5V21h12V9.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-    </svg>
+    <img src="https://img.icons8.com/ios-glyphs/30/ffffff/home.png" alt="Home" />
   </button>
   <button data-page="movies" aria-label="Movies">
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <rect x="3" y="4" width="18" height="16" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2" />
-      <path d="M8 4v4M16 4v4M3 9h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-    </svg>
+    <img src="https://img.icons8.com/ios-glyphs/30/ffffff/movie-projector.png" alt="Movies" />
   </button>
   <button data-page="tv" aria-label="TV Shows">
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <rect x="3" y="6" width="18" height="12" rx="2" ry="2" fill="none" stroke="currentColor" stroke-width="2" />
-      <path d="M8 21h8M10 18v3M14 18v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-    </svg>
+    <img src="https://img.icons8.com/ios-glyphs/30/ffffff/tv.png" alt="TV Shows" />
   </button>
   <button data-page="search" id="mobileSearchBtn" aria-label="Search">
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2" />
-      <path d="m20 20-3.5-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-    </svg>
+    <img src="https://img.icons8.com/ios-glyphs/30/ffffff/search--v1.png" alt="Search" />
   </button>
   <button data-page="settings" aria-label="Settings">
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <path d="M12 8.5A3.5 3.5 0 1 1 8.5 12 3.5 3.5 0 0 1 12 8.5Z" fill="none" stroke="currentColor" stroke-width="2" />
-      <path d="m19.4 15 1.1 1.9-1.9 3.3-2.2-.6a8.6 8.6 0 0 1-1.6.9L14.5 23h-5l-.3-2.5a8.6 8.6 0 0 1-1.6-.9l-2.2.6-1.9-3.3L4.6 15a9.1 9.1 0 0 1 0-2l-1.1-1.9 1.9-3.3 2.2.6a8.6 8.6 0 0 1 1.6-.9L9.5 5h5l.3 2.5a8.6 8.6 0 0 1 1.6.9l2.2-.6 1.9 3.3-1.1 1.9a9.1 9.1 0 0 1 0 2Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
-    </svg>
+    <img src="https://img.icons8.com/ios-glyphs/30/ffffff/settings.png" alt="Settings" />
   </button>
 </nav>
 
@@ -99,7 +64,7 @@
     <input type="text" id="mobileSearchInput" placeholder="Search..." autocomplete="off" spellcheck="false" />
 
     <div class="mobile-search-icon" aria-hidden="true">
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9c27b0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="11" cy="11" r="8"></circle>
         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
       </svg>
@@ -107,61 +72,5 @@
 
     <!-- Clear Search Input Button -->
     <button id="mobileSearchCloseBtn" aria-label="Clear search input">×</button>
-  </div>
-
-  <div id="mobileSearchResults" class="mobile-search-results" aria-live="polite">
-    <section id="mobileSearchHistorySection" class="mobile-search-section">
-      <div class="mobile-search-section-head">
-        <h3>Recent Searches</h3>
-      </div>
-      <ul id="mobileSearchHistoryList" class="mobile-search-list" role="list"></ul>
-    </section>
-
-    <section id="mobileSearchSuggestSection" class="mobile-search-section" hidden>
-      <div class="mobile-search-section-head">
-        <h3 id="mobileSearchSuggestTitle">Suggestions</h3>
-      </div>
-      <ul id="mobileSearchSuggestList" class="mobile-search-list" role="list"></ul>
-    </section>
-
-    <p id="mobileSearchHint" class="mobile-search-hint">Type to search.</p>
-  </div>
-</div>
-
-<div id="navbarAuthModal" class="navbar-auth-modal" hidden>
-  <div class="navbar-auth-panel" role="dialog" aria-modal="true" aria-labelledby="navbarAuthTitle">
-    <button type="button" id="navbarAuthCloseBtn" class="navbar-auth-close" aria-label="Close account modal">×</button>
-    <h3 id="navbarAuthTitle">Log In</h3>
-    <p id="navbarAuthHint">Use your email and password.</p>
-    <form id="navbarAuthForm" class="navbar-auth-form" autocomplete="on">
-      <input id="navbarAuthEmail" name="email" type="email" placeholder="Email..." aria-label="Email" autocomplete="email" spellcheck="false" required />
-      <div class="navbar-auth-password-wrap">
-        <input id="navbarAuthPassword" name="password" type="password" placeholder="Password..." aria-label="Password" autocomplete="current-password" required />
-        <button type="button" id="navbarAuthPasswordToggleBtn" class="navbar-auth-password-toggle" aria-label="Show password" title="Show password">
-          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-            <circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8" />
-          </svg>
-        </button>
-      </div>
-      <button type="button" id="navbarAuthForgotBtn" class="navbar-auth-link">Forgot password?</button>
-      <p id="navbarAuthStatus" class="navbar-auth-status" aria-live="polite"></p>
-      <div class="navbar-auth-actions">
-        <button type="submit" id="navbarAuthSubmitBtn">Continue</button>
-        <button type="button" id="navbarAuthSwitchBtn" class="navbar-auth-secondary">Create account</button>
-      </div>
-    </form>
-  </div>
-</div>
-
-<div id="navbarResetSentModal" class="navbar-auth-modal" hidden>
-  <div class="navbar-auth-panel" role="dialog" aria-modal="true" aria-labelledby="navbarResetSentTitle">
-    <button type="button" id="navbarResetSentCloseBtn" class="navbar-auth-close" aria-label="Close reset confirmation">×</button>
-    <h3 id="navbarResetSentTitle">Reset Email Sent</h3>
-    <p id="navbarResetSentPrimary">A password reset link was sent.</p>
-    <p class="navbar-reset-hint">If you cannot find it, check your junk, spam, or trash folders.</p>
-    <div class="navbar-auth-actions">
-      <button type="button" id="navbarResetSentDoneBtn">Close</button>
-    </div>
   </div>
 </div>

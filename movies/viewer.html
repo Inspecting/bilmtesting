@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bilm 💜 - Movie Viewer</title>
+
+  <!-- PWA + iOS fullscreen support -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0a0a0a" />
+
+  <link rel="manifest" href="../manifest.json" />
+  <link rel="apple-touch-icon" href="../icon.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600&display=swap" rel="stylesheet" />
+
+  <style>
+    * {
+      margin: 0; padding: 0; box-sizing: border-box;
+    }
+    html, body {
+      height: 100%;
+      font-family: 'Poppins', sans-serif;
+      background-color: #121212;
+      color: #f0f0f0;
+      overflow-x: hidden;
+    }
+    body {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    main {
+      flex: 1;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      position: relative;
+    }
+    #playerWrapper {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 800px;
+      max-width: 95vw;
+      position: relative;
+      gap: 12px;
+    }
+    #playerWithControls {
+      width: 100%;
+      border-radius: 12px;
+      box-shadow: 0 0 20px #a14effcc;
+      overflow: visible;
+      display: flex;
+      flex-direction: column;
+      background: black;
+      position: relative;
+    }
+#playerContainer {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  position: relative;
+  background: black;
+  border-radius: 12px;      /* Rounded corners */
+  overflow: hidden;         /* Clips iframe edges */
+}
+
+iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  display: block;
+  border-radius: 12px;      /* Rounded corners (for safety) */
+}
+    #clickShield {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 5;
+      pointer-events: none;
+      background: transparent;
+    }
+#playexBar {
+  background: rgba(26, 22, 40, 0.9);
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  user-select: none;
+  position: relative;
+  z-index: 10;
+  border-radius: 0 0 12px 12px;  /* Rounded bottom corners */
+}
+    #fullscreenBtn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: #f0f0f0;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border-radius: 6px;
+      transition: background-color 0.3s ease;
+      flex-shrink: 0;
+    }
+    #fullscreenBtn:hover {
+      background-color: #a855f7;
+    }
+    #serverBtn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: #f0f0f0;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border-radius: 6px;
+      position: relative;
+      transition: background-color 0.3s ease;
+      flex-shrink: 0;
+    }
+    #serverBtn:hover {
+      background-color: #a855f7;
+    }
+    #serverDropdown {
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(26, 22, 40, 0.97);
+      border-radius: 12px;
+      box-shadow: 0 0 16px #a14effcc;
+      padding: 8px 0;
+      width: 160px;
+      display: none;
+      flex-direction: column;
+      z-index: 9999;
+      user-select: auto;
+      white-space: nowrap;
+    }
+    #serverDropdownCloseBtn {
+      display: none !important;
+    }
+    .serverDropdownItem {
+      padding: 10px 20px;
+      color: #f0f0f0;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 15px;
+      transition: background-color 0.2s ease;
+      user-select: none;
+    }
+    .serverDropdownItem:hover {
+      background-color: #a855f7;
+    }
+    .serverDropdownItem.active {
+      background-color: #a14eff;
+      cursor: default;
+    }
+    #closeBtn {
+      display: none;
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 100;
+      background: transparent;
+      color: white;
+      border: none;
+      width: 48px;
+      height: 48px;
+      font-size: 20px;
+      cursor: pointer;
+      font-weight: 700;
+      text-align: center;
+      line-height: 48px;
+      border-radius: 0;
+    }
+    .simulated-fullscreen {
+      position: fixed !important;
+      top: 0;
+      left: 0;
+      width: 100vw !important;
+      height: 100vh !important;
+      z-index: 99;
+      border-radius: 0 !important;
+    }
+    .hide-navbar {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+
+<div id="navbarContainer"></div>
+
+<main>
+  <div id="playerWrapper">
+    <div id="playerWithControls">
+      <div id="playerContainer">
+        <iframe
+          id="videoPlayer"
+          src=""
+          allowfullscreen
+          allow="fullscreen; encrypted-media"
+          playsinline
+          scrolling="no"
+        ></iframe>
+        <div id="clickShield"></div>
+      </div>
+
+      <div id="playexBar">
+        <button id="serverBtn" title="Select Server" aria-haspopup="true" aria-expanded="false" aria-controls="serverDropdown" aria-label="Select server">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="4" width="20" height="7" rx="2" ry="2"></rect>
+            <rect x="2" y="13" width="20" height="7" rx="2" ry="2"></rect>
+            <line x1="6" y1="8" x2="6" y2="8"></line>
+            <line x1="6" y1="17" x2="6" y2="17"></line>
+          </svg>
+          <div id="serverDropdown" role="menu" aria-label="Server selection">
+            <div class="serverDropdownItem active" data-server="vidsrc" role="menuitem" tabindex="0">VidSrc</div>
+            <div class="serverDropdownItem" data-server="vidplay" role="menuitem" tabindex="0">VidPlay</div>
+          </div>
+        </button>
+        <button id="fullscreenBtn" title="Fullscreen" aria-label="Fullscreen">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            viewBox="0 0 24 24"
+          >
+            <path d="M4 4h6M4 4v6M20 20h-6M20 20v-6M4 20l6-6M20 4l-6 6" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+  // Load navbar HTML and scripts
+  fetch('/bilm/shared/navbar.html')
+    .then(res => res.text())
+    .then(html => {
+      document.getElementById('navbarContainer').innerHTML = html;
+      const css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = '/bilm/shared/navbar.css';
+      document.head.appendChild(css);
+      const script = document.createElement('script');
+      script.src = '/bilm/shared/navbar.js';
+      document.body.appendChild(script);
+    });
+
+  const params = new URLSearchParams(window.location.search);
+  const contentId = params.get('id'); // movie or TV id
+
+  const iframe = document.getElementById('videoPlayer');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+  const playerContainer = document.getElementById('playerContainer');
+  const navbarContainer = document.getElementById('navbarContainer');
+
+  const serverBtn = document.getElementById('serverBtn');
+  const serverDropdown = document.getElementById('serverDropdown');
+  const serverItems = [...serverDropdown.querySelectorAll('.serverDropdownItem')];
+
+  let currentServer = 'vidsrc';
+
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+  function updateIframe() {
+    if (!contentId) {
+      console.warn('No id parameter provided.');
+      iframe.src = '';
+      return;
+    }
+    let url = '';
+    if (currentServer === 'vidsrc') {
+      // vidsrc supports movie and tv embeds using id only
+      url = `https://vidsrc.me/embed/${contentId}`;
+    } else if (currentServer === 'vidplay') {
+      url = `https://vidplay.to/movie/${contentId}`;
+    }
+    iframe.src = url;
+  }
+
+  serverBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isOpen = serverDropdown.style.display === 'flex';
+    if (isOpen) {
+      serverDropdown.style.display = 'none';
+      serverBtn.setAttribute('aria-expanded', 'false');
+    } else {
+      serverDropdown.style.display = 'flex';
+      serverBtn.setAttribute('aria-expanded', 'true');
+    }
+  });
+
+  document.addEventListener('click', () => {
+    serverDropdown.style.display = 'none';
+    serverBtn.setAttribute('aria-expanded', 'false');
+  });
+
+  serverItems.forEach(item => {
+    item.addEventListener('click', () => {
+      if (item.classList.contains('active')) return;
+      serverItems.forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      currentServer = item.getAttribute('data-server');
+      updateIframe();
+      serverDropdown.style.display = 'none';
+      serverBtn.setAttribute('aria-expanded', 'false');
+    });
+  });
+
+  fullscreenBtn.onclick = () => {
+    if (!isMobile) {
+      if (playerContainer.requestFullscreen) {
+        playerContainer.requestFullscreen();
+      } else if (playerContainer.webkitRequestFullscreen) {
+        playerContainer.webkitRequestFullscreen();
+      } else if (playerContainer.msRequestFullscreen) {
+        playerContainer.msRequestFullscreen();
+      }
+    } else {
+      playerContainer.classList.add('simulated-fullscreen');
+    }
+    if (document.getElementById('closeBtn')) {
+      document.getElementById('closeBtn').style.display = 'block';
+    }
+    navbarContainer.classList.add('hide-navbar');
+  };
+
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement) {
+      if (document.getElementById('closeBtn')) {
+        document.getElementById('closeBtn').style.display = 'none';
+      }
+      navbarContainer.classList.remove('hide-navbar');
+    }
+  });
+
+  // Initial load
+  updateIframe();
+</script>
+
+<script src="/bilm/shared/adblock/adblock.js"></script>
+
+</body>
+</html>
